@@ -1,24 +1,8 @@
 # SkillsDock
 
-`skillsdock` is a simple CLI to scan, track, and sync AI skills across tools like Codex, Claude, and Cursor from one place.
+`skillsdock` is a CLI to discover, track, and sync AI skills across tools like Codex, Claude, Cursor, and other local skill sources.
 
-It is built for two audiences:
-- Engineers with many skill repositories and local folders.
-- New or non-technical users who just want one command to keep skills organized.
-
-## Why this exists
-
-Most people end up with skills spread across:
-- `~/.codex/skills`
-- `~/.claude/skills`
-- `~/.cursor/rules`
-- random repos and local workspaces
-
-SkillsDock gives you a single registry with:
-- discovery (`scan`)
-- visibility (`list`, `inspect`)
-- synchronization (`sync`)
-- basic health checks (`doctor`)
+This repository is intentionally **CLI-only**.
 
 ## Install
 
@@ -26,34 +10,26 @@ SkillsDock gives you a single registry with:
 npm install -g skillsdock
 ```
 
-Or run without global install:
+Or run directly:
 
 ```bash
 npx skillsdock --help
 ```
 
-For local development in this repository:
+## Quick Start
 
 ```bash
-bun install
-bun run skillsdock -- --help
-```
-
-## Quick Start (60 seconds)
-
-```bash
-# 1) create default config + registry in ~/.skillsdock
+# create default config + registry
 skillsdock init
 
-# 2) scan default source folders
+# scan default sources
 skillsdock scan
 
-# 3) view current primary skills
+# show primary active skills
 skillsdock list
 
-# 4) sync to a target agent
+# preview sync
 skillsdock sync --to claude --dry-run
-skillsdock sync --to claude
 ```
 
 ## Commands
@@ -61,64 +37,39 @@ skillsdock sync --to claude
 ```bash
 skillsdock init [--config <path>] [--registry <path>]
 skillsdock scan [paths...] [--config <path>] [--registry <path>]
-skillsdock list [--source <name>] [--changed] [--all] [--json]
-skillsdock inspect <id|key> [--json]
-skillsdock sync --to <target> [--dry-run] [--all]
-skillsdock doctor
+skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
+skillsdock inspect <id|key> [--registry <path>] [--json]
+skillsdock sync --to <target> [--registry <path>] [--config <path>] [--dry-run] [--all]
+skillsdock doctor [--config <path>] [--registry <path>]
+skillsdock version
 ```
 
-## Registry model
+## Default Sources And Targets
 
-SkillsDock stores data in `~/.skillsdock/registry.json`:
-- `firstSeenAt` and `lastSeenAt`
-- `changedAt`
-- `createdAt` and `updatedAt` (git-aware when possible)
-- `sourcePath`, `sourceName`, `originRepo`
+Default sources:
+- `~/.codex/skills`
+- `~/.claude/skills`
+- `~/.agents/skills`
+
+Default targets:
+- `codex` -> nested `SKILL.md`
+- `claude` -> nested `SKILL.md`
+- `cursor` -> flat `*.mdc`
+
+## Registry
+
+SkillsDock stores metadata in `~/.skillsdock/registry.json`:
+- discovery state (`active` / `missing`)
+- timestamps (`firstSeenAt`, `lastSeenAt`, `changedAt`)
+- inferred creation/update times (`createdAt`, `updatedAt`)
+- source and origin info (`sourceName`, `sourcePath`, `originRepo`)
 - content hash (`sha256`)
-- a `primary` copy per skill id for conflict-free sync
-
-## Config
-
-Default config location: `~/.skillsdock/config.json`
-
-```json
-{
-  "version": 1,
-  "sources": [
-    { "name": "codex", "path": "~/.codex/skills" },
-    { "name": "claude", "path": "~/.claude/skills" },
-    { "name": "agents", "path": "~/.agents/skills" }
-  ],
-  "targets": {
-    "codex": { "path": "~/.codex/skills", "layout": "nested", "filename": "SKILL.md" },
-    "claude": { "path": "~/.claude/skills", "layout": "nested", "filename": "SKILL.md" },
-    "cursor": { "path": "~/.cursor/rules", "layout": "flat", "extension": ".mdc" }
-  },
-  "scan": {
-    "maxDepth": 8,
-    "ignoreDirs": ["node_modules", ".git", ".next", "dist", "build", ".turbo", ".cache"]
-  }
-}
-```
-
-## Notes
-
-- SkillsDock scans `SKILL.md` and `*.skill` files.
-- `sync` writes the primary copy of each active skill by default.
-- Use `--all` on `sync` and `list` to include non-primary copies.
-
-## Current scope
-
-The CLI is now the core product in this repository.  
-The existing Next.js app remains work-in-progress and will be aligned to the same registry model.
+- `isPrimary` copy selection per skill id
 
 ## Publish
 
 ```bash
-# dry-run package contents
 npm run pack:check
-
-# publish to npm
 npm publish --access public
 ```
 
