@@ -7,13 +7,13 @@ This repository is intentionally **CLI-only**.
 ## Install
 
 ```bash
-npm install -g skillsdock
+npm install -g @cogineai/skillsdock
 ```
 
 Or run directly:
 
 ```bash
-npx skillsdock --help
+npx @cogineai/skillsdock --help
 ```
 
 ## Quick Start

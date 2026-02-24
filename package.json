@@ -1,5 +1,5 @@
 {
-  "name": "skillsdock",
+  "name": "@cogineai/skillsdock",
   "version": "0.1.0",
   "description": "CLI to scan, track, and sync AI skills across agents and IDEs.",
   "bin": {
