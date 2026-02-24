@@ -1,0 +1,68 @@
+{
+  "name": "skillsdock",
+  "version": "0.1.0",
+  "description": "CLI to scan, track, and sync AI skills across agents and IDEs.",
+  "bin": {
+    "skillsdock": "./bin/skillsdock.mjs"
+  },
+  "type": "module",
+  "files": [
+    "bin/skillsdock.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "preferGlobal": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "skillsdock": "node ./bin/skillsdock.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "keywords": [
+    "skills",
+    "ai",
+    "cli",
+    "agents",
+    "developer-tools",
+    "codex",
+    "claude",
+    "cursor"
+  ],
+  "author": "SkillsDock Contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cogine-ai/skillsdock.git"
+  },
+  "homepage": "https://github.com/cogine-ai/skillsdock#readme",
+  "bugs": {
+    "url": "https://github.com/cogine-ai/skillsdock/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/jszip": "^3.4.1",
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^10.0.0",
+    "eslint-config-next": "^16.1.6",
+    "next": "^16.1.6",
+    "postcss": "^8.5.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3"
+  }
+}
