@@ -1,0 +1,122 @@
+{
+  "meta": {
+    "version": 1,
+    "referenceSource": "Pattern-seeded from public multi-agent conventions (including vercel-labs/skills) and curated for SkillsDock.",
+    "referenceDate": "2026-02-24",
+    "note": "This registry is a local curated snapshot. SkillsDock does not fetch agent paths from network at runtime."
+  },
+  "agents": [
+    {
+      "id": "openclaw",
+      "displayName": "OpenClaw",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.openclaw/skills", "format": "openclaw-md", "optional": true },
+          "target": { "path": "~/.openclaw/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/skills", "format": "openclaw-md", "optional": true },
+          "target": { "path": "${projectRoot}/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" }
+        }
+      }
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.codex/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.codex/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        }
+      }
+    },
+    {
+      "id": "claude",
+      "displayName": "Claude",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.claude/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.claude/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        }
+      }
+    },
+    {
+      "id": "cursor",
+      "displayName": "Cursor",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.cursor/rules", "format": "mdc", "optional": true },
+          "target": { "path": "~/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.cursor/rules", "format": "mdc", "optional": true },
+          "target": { "path": "${projectRoot}/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+        }
+      }
+    },
+    {
+      "id": "cline",
+      "displayName": "Cline",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.cline/rules", "format": "mdc", "optional": true },
+          "target": { "path": "~/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.cline/rules", "format": "mdc", "optional": true },
+          "target": { "path": "${projectRoot}/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+        }
+      }
+    },
+    {
+      "id": "codebuddy",
+      "displayName": "CodeBuddy",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.codebuddy/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.codebuddy/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        }
+      }
+    },
+    {
+      "id": "trae",
+      "displayName": "Trae",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.trae/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.trae/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.opencode/skills", "format": "opencode-md", "optional": true },
+          "target": { "path": "~/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.opencode/skills", "format": "opencode-md", "optional": true },
+          "target": { "path": "${projectRoot}/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" }
+        }
+      }
+    }
+  ]
+}
