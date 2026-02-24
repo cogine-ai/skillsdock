@@ -12,6 +12,21 @@ test('parseContentForFormat parses skill markdown frontmatter', () => {
   assert.match(parsed.normalized.body, /Run steps\./);
 });
 
+test('parseContentForFormat rejects skill-md without required frontmatter', () => {
+  assert.throws(
+    () => parseContentForFormat('skill-md', '# Missing frontmatter', '/tmp/invalid/SKILL.md'),
+    /missing YAML frontmatter/
+  );
+});
+
+test('parseContentForFormat rejects skill-md with non-string name/description', () => {
+  const raw = `---\nname: 123\ndescription: true\n---\n\n# Invalid`;
+  assert.throws(
+    () => parseContentForFormat('skill-md', raw, '/tmp/invalid/SKILL.md'),
+    /must include string "name" and "description"/
+  );
+});
+
 test('convertContentToFormat converts mdc to skill-md', () => {
   const item = {
     sourceFormat: 'mdc',

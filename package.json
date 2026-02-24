@@ -1,6 +1,6 @@
 {
   "name": "@cogineai/skillsdock",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI to scan, track, and sync AI skills across agents and IDEs.",
   "bin": {
     "skillsdock": "bin/skillsdock.mjs"
@@ -45,6 +45,7 @@
     "node": ">=18.17.0"
   },
   "dependencies": {
+    "gray-matter": "^4.0.3",
     "jszip": "^3.10.1"
   }
 }

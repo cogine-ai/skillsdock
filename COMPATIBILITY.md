@@ -1,6 +1,6 @@
 # Compatibility Matrix
 
-SkillsDock v0.1.1 supports both **user scope** and **project scope** for each built-in agent preset.
+SkillsDock v0.1.2 supports both **user scope** and **project scope** for each built-in agent preset.
 
 ## Agent Path Matrix
 
@@ -24,18 +24,33 @@ SkillsDock v0.1.1 supports both **user scope** and **project scope** for each bu
 | `openclaw-md` | `*.md` |
 | `opencode-md` | `*.md` |
 
+## `skill-md` Compatibility Notes
+
+- `SKILL.md` must contain YAML frontmatter with string `name` and `description`.
+- `metadata.internal: true` is skipped by default during scan.
+  - Set `INSTALL_INTERNAL_SKILLS=1` or `INSTALL_INTERNAL_SKILLS=true` to include internal skills.
+- Scan discovery follows the same priority style as `vercel-labs/skills`:
+  - common directories (such as `skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/`, etc.)
+  - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` declared skill paths
+  - recursive scan fallback
+- Frontmatter parsing is powered by `gray-matter`.
+- `skillsdock doctor --skills-spec` validates spec-convention compliance and plugin manifest path safety.
+
 ## Sync Format Behavior
 
 - Same format + non-package source: symlink (default mode) or copy.
 - `.skill` source package: extracted and copied as converted content.
 - Cross-format sync: converted and copied.
 - If symlink fails and fallback is `copy`, SkillsDock writes copied content and reports a warning.
+- Governance tag behavior:
+  - `regular` and `frozen` are eligible for sync.
+  - `disabled` and `deleted` are excluded from sync.
 
 ## Platform Support
 
 - Required and validated in CI: **macOS**, **Linux**.
 - Node versions in CI: **18**, **20**, **22**.
-- Windows support is not guaranteed in v0.1.1.
+- Windows support is not guaranteed in v0.1.2.
 
 ## Reference Note
 

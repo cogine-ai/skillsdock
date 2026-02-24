@@ -19,7 +19,7 @@ function runCli(args, cwd) {
   return result;
 }
 
-test('smoke: init -> scan -> list -> inspect -> sync dry-run -> doctor --agents', async () => {
+test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> cleanup plan -> sync dry-run -> doctor --agents', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-smoke-'));
   const sourceDir = path.join(base, 'source-skills');
   const targetUserDir = path.join(base, 'target-user');
@@ -39,14 +39,16 @@ test('smoke: init -> scan -> list -> inspect -> sync dry-run -> doctor --agents'
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const cfg = JSON.parse(await readFile(configPath, 'utf8'));
-  cfg.sources.push({
-    name: 'fixture-user',
-    agent: 'fixture',
-    scope: 'user',
-    path: sourceDir,
-    format: 'skill-md',
-    optional: false
-  });
+  cfg.sources = [
+    {
+      name: 'fixture-user',
+      agent: 'fixture',
+      scope: 'user',
+      path: sourceDir,
+      format: 'skill-md',
+      optional: false
+    }
+  ];
   cfg.targets['fixture-user'] = {
     name: 'fixture-user',
     agent: 'fixture',
@@ -67,16 +69,22 @@ test('smoke: init -> scan -> list -> inspect -> sync dry-run -> doctor --agents'
   };
   await writeFile(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
 
-  result = runCli(['scan', '--config', configPath, '--registry', registryPath], base);
+  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  result = runCli(['list', '--config', configPath, '--registry', registryPath, '--json'], base);
+  result = runCli(['all-local-skills', '--config', configPath, '--registry', registryPath, '--json'], base);
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const listPayload = JSON.parse(result.stdout);
-  assert.equal(listPayload.count > 0, true);
+  const allLocalPayload = JSON.parse(result.stdout);
+  assert.equal(allLocalPayload.count > 0, true);
 
-  const firstId = listPayload.items[0].id;
-  result = runCli(['inspect', firstId, '--registry', registryPath, '--json'], base);
+  const firstId = allLocalPayload.items[0].items[0].id;
+  result = runCli(['skill-detail', firstId, '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['tag', 'set', firstId, '--tag', 'frozen', '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['cleanup', '--plan', '--registry', registryPath], base);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   result = runCli(
