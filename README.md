@@ -4,14 +4,23 @@
 
 This repository is intentionally **CLI-only**.
 
-## What Changed In v0.1.1
+## What Changed In v0.1.2
 
-- Built-in agent registry for OpenClaw + Core agent presets.
-- Dual-scope paths for every built-in agent (`user` + `project`).
-- Format-aware sync with default `symlink` mode and safe copy fallback.
-- Config schema upgraded to `version: 2` with non-destructive migration.
-- `doctor --agents` compatibility matrix.
-- CI matrix for macOS + Linux (Node 18/20/22).
+- Added governance views:
+  - `all-local-skills`
+  - `skill-detail`
+- Added lifecycle tags:
+  - `regular`
+  - `disabled`
+  - `frozen`
+  - `deleted` (soft delete)
+- Added cleanup workflow:
+  - `cleanup --plan`
+  - `cleanup --apply`
+  - `cleanup --rollback <runId>`
+- Upgraded registry to canonical-path identity with legacy-key index compatibility.
+- Added structure manifests for multi-file skills and manifest hash based duplicate detection.
+- `sync` now skips `disabled` and `deleted` by default.
 
 ## Design Principle
 
@@ -42,8 +51,17 @@ skillsdock init
 # scan configured sources
 skillsdock scan
 
-# view primary active skills
-skillsdock list
+# governance view
+skillsdock all-local-skills
+
+# inspect one skill (path/key/id selector)
+skillsdock skill-detail my-skill --all-copies
+
+# mark a skill as frozen
+skillsdock tag set my-skill --tag frozen --reason "manual lock"
+
+# preview cleanup actions
+skillsdock cleanup --plan
 
 # dry-run sync to OpenClaw user scope
 skillsdock sync --to openclaw --scope user --dry-run
@@ -54,10 +72,16 @@ skillsdock sync --to openclaw --scope user --dry-run
 ```bash
 skillsdock init [--config <path>] [--registry <path>]
 skillsdock scan [paths...] [--config <path>] [--registry <path>]
+skillsdock all-local-skills [--config <path>] [--registry <path>] [--source <name>] [--scope <user|project>] [--tag <tag>] [--all] [--json]
+skillsdock skill-detail <selector> [--registry <path>] [--all-copies] [--json]
+skillsdock tag set <selector> --tag <regular|disabled|frozen|deleted> [--reason <text>] [--all-copies] [--registry <path>]
+skillsdock tag list [--registry <path>] [--source <name>] [--scope <user|project>] [--tag <tag>] [--all] [--json]
+skillsdock cleanup --plan|--apply [--registry <path>] [--source <name>] [--scope <user|project>] [--all] [--json]
+skillsdock cleanup --rollback <runId> [--registry <path>]
 skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
-skillsdock inspect <id|key> [--registry <path>] [--json]
+skillsdock inspect <id|key|path> [--registry <path>] [--json]
 skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--registry <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
-skillsdock doctor [--config <path>] [--registry <path>] [--agents]
+skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
 ```
 
@@ -95,6 +119,25 @@ Behavior:
 - `mdc` (`*.mdc`)
 - `openclaw-md` (`*.md`)
 - `opencode-md` (`*.md`)
+
+### `skill-md` Parsing Rules (v0.1.2)
+
+SkillsDock v0.1.2 aligns local `SKILL.md` parsing with the conventions used by [vercel-labs/skills](https://github.com/vercel-labs/skills):
+
+- `SKILL.md` must include YAML frontmatter.
+- Frontmatter must include string `name` and string `description`.
+- `metadata.internal: true` is treated as internal and skipped by default.
+  - Set `INSTALL_INTERNAL_SKILLS=1` (or `true`) to include internal skills in `scan`.
+- Discovery prioritizes common skills directories and `.claude-plugin` manifest-declared paths, then recursively scans as fallback.
+- Frontmatter parsing uses [gray-matter](https://github.com/jonschlinkert/gray-matter) for compatibility and YAML edge cases.
+
+### Skills Spec Validation
+
+Use `doctor --skills-spec` to validate local `skill-md` sources against the [Agent Skills specification](https://agentskills.io) conventions:
+
+- validates `SKILL.md` parseability and required frontmatter fields
+- validates name style (recommended lowercase + hyphen, up to 64 chars)
+- validates `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` path safety and local-path conventions
 
 ## Config (v2)
 
@@ -143,14 +186,24 @@ Default config file: `~/.skillsdock/config.json`
 
 SkillsDock stores metadata in `~/.skillsdock/registry.json`.
 
-Each entry includes:
+Registry version `2` includes:
 
-- source info (`sourceName`, `sourcePath`, `sourceFormat`)
-- skill identity (`id`, `name`, `description`)
-- normalized content (`normalized.name`, `normalized.description`, `normalized.body`)
-- timestamps (`firstSeenAt`, `lastSeenAt`, `changedAt`, `createdAt`, `updatedAt`)
-- content hash (`sha256`)
-- primary selection (`isPrimary`)
+- canonical keys (`path:/abs/path/to/skill/SKILL.md`)
+- compatibility indexes:
+  - `index.byCanonicalPath`
+  - `index.byLegacyKey`
+- item policy fields:
+  - `policy.tag`
+  - `policy.reason`
+  - `policy.updatedAt`
+- structure manifest fields:
+  - `structureManifest.entryFile`
+  - `structureManifest.includedFiles`
+  - `structureManifest.fileHashes`
+  - `manifestHash`
+- cleanup history:
+  - `cleanupHistory[].runId`
+  - `cleanupHistory[].actions[]`
 
 ## Compatibility Matrix
 
