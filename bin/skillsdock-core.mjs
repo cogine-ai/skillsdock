@@ -545,7 +545,6 @@ function normalizeConfigV2(input, projectRoot = detectProjectRoot(process.cwd())
     const currentName = entry.name;
     const mappedName = legacySourceMap[currentName] || currentName;
     if (mappedName && migratedSourceNames.has(mappedName)) {
-      migratedSources.push(entry);
       continue;
     }
     if (mappedName && mappedName !== currentName) {
@@ -1091,13 +1090,20 @@ async function writeFileAtomic(filePath, content) {
   await fs.writeFile(tmpPath, content, 'utf8');
 
   try {
-    await removeFileOrSymlinkIfExists(filePath);
     await fs.rename(tmpPath, filePath);
-  } catch (error) {
+  } catch (renameError) {
+    const code = renameError && typeof renameError === 'object' ? renameError.code : undefined;
+    if (code === 'EXDEV' || code === 'EPERM' || code === 'EEXIST') {
+      try {
+        await removeFileOrSymlinkIfExists(filePath);
+        await fs.rename(tmpPath, filePath);
+        return;
+      } catch {}
+    }
     try {
       await fs.unlink(tmpPath);
     } catch {}
-    throw error;
+    throw renameError;
   }
 }
 
