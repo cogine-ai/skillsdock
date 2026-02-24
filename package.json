@@ -1,19 +1,24 @@
 {
   "name": "@cogineai/skillsdock",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI to scan, track, and sync AI skills across agents and IDEs.",
   "bin": {
     "skillsdock": "bin/skillsdock.mjs"
   },
   "type": "module",
   "files": [
+    "bin/agent-registry.json",
+    "bin/skillsdock-core.mjs",
     "bin/skillsdock.mjs",
+    "CHANGELOG.md",
+    "COMPATIBILITY.md",
     "README.md",
     "LICENSE"
   ],
   "preferGlobal": true,
   "scripts": {
     "skillsdock": "node ./bin/skillsdock.mjs",
+    "test": "node --test",
     "pack:check": "npm pack --dry-run"
   },
   "keywords": [
