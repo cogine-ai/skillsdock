@@ -1,97 +1,50 @@
 # AGENTS.md
 
-## Project Identity
+## Project Basics
 
-- Name: `@cogineai/skillsdock`
-- Type: CLI-only Node.js project
+- Package: `@cogineai/skillsdock`
+- Repo type: CLI-only Node.js project
 - Runtime: Node.js `>=18.17.0`
-- Current target release line: `0.1.1`
 
-## Product Scope
+## What Belongs Here
 
-SkillsDock manages local skill files across multiple agents and scopes.
+- Keep this file focused on collaboration and engineering guardrails.
+- Keep product/business logic in source docs (`README.md`, `docs/*`, `COMPATIBILITY.md`), not here.
+- Do not hardcode release-line notes here; source of truth is `package.json` and changelog.
 
-Core behavior:
-- Discover skills from configured sources.
-- Persist metadata in `~/.skillsdock/registry.json`.
-- Sync to configured agent targets.
-- Diagnose compatibility via `doctor` and `doctor --agents`.
+## Engineering Guardrails
 
-Non-goals for current scope:
-- No web UI in this repository.
-- No runtime network fetch for agent registry.
-- No remote skill marketplace dependency.
+- Preserve backward compatibility for user config/registry unless a migration is explicitly implemented.
+- Keep `init` non-destructive (never overwrite explicit user paths).
+- Keep sync operations safe:
+  - require `--scope user|project` for dual-scope agent sync by agent name
+  - use atomic copy writes (`tmp` + `rename`)
+- Keep outputs deterministic and machine-friendly for `--json` modes.
 
-## Agent Registry Rules
+## Quality Gates
 
-- Built-in presets are defined in `bin/agent-registry.json`.
-- Presets are curated snapshots (pattern seed only), not runtime upstream dependencies.
-- Every built-in agent must support both scopes:
-  - `user`
-  - `project`
-- Default built-in agents in v0.1.1:
-  - openclaw
-  - codex
-  - claude
-  - cursor
-  - cline
-  - codebuddy
-  - trae
-  - opencode
+Before merge:
 
-## Config Rules
+- `npm test`
+- `npm run pack:check`
 
-- Config schema version is `2`.
-- `init` must remain non-destructive:
-  - preserve existing user-defined entries
-  - append missing defaults only
-  - never overwrite explicit user paths
-- Targets are separate per-scope keys:
-  - `<agent>-user`
-  - `<agent>-project`
+For behavior changes:
 
-## Sync Rules
+- update `README.md`, `COMPATIBILITY.md`, `CHANGELOG.md`
+- keep `package.json` version and `bin/skillsdock-core.mjs` `APP_VERSION` in sync
 
-- For dual-scope agents, `--scope user|project` is required when syncing by agent name.
-- Default sync mode is `symlink`.
-- Fallback policy default is `copy`.
-- If conversion is needed, copy is required and should warn.
-- Copy writes should be atomic (`tmp` + `rename`).
+## Git / PR Workflow
 
-## Supported Formats (v0.1.1)
-
-- `skill-md` (`SKILL.md`, `.skill`)
-- `mdc` (`*.mdc`)
-- `openclaw-md` (`*.md`)
-- `opencode-md` (`*.md`)
-
-Registry items should keep:
-- original raw content
-- normalized content fields:
-  - `normalized.name`
-  - `normalized.description`
-  - `normalized.body`
-
-## Testing and CI
-
-Required checks before merge:
-- unit tests pass
-- smoke test pass (`init -> scan -> list -> inspect -> sync --dry-run -> doctor --agents`)
-- `npm run pack:check` pass
-
-CI matrix must include:
-- macOS
-- Linux
-- Node 18/20/22
-
-## Release Hygiene
-
-- Keep `package.json` version and `bin/skillsdock-core.mjs` app version in sync.
-- Update `README.md`, `COMPATIBILITY.md`, and `CHANGELOG.md` for behavior changes.
-- Keep npm package file list minimal and explicit.
-
-## Branch/Worktree Workflow
-
-- Use prefixed branch names: `codex/...`
-- For non-trivial feature work, prefer dedicated worktree.
-- Keep commits scoped and reviewable.
+- Branch names should use prefix: `<agent-name>/...`
+- Valid `<agent-name>` values come from the built-in agent registry (`bin/agent-registry.json`), currently:
+  - `openclaw`
+  - `codex`
+  - `claude`
+  - `cursor`
+  - `cline`
+  - `codebuddy`
+  - `trae`
+  - `opencode`
+- Keep commits focused and reviewable.
+- Default PR flow: create branch -> push -> open PR -> stop.
+- Do **not** merge PRs automatically (including `gh pr merge`) unless the user explicitly asks to merge.
