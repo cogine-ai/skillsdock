@@ -35,7 +35,16 @@ For behavior changes:
 
 ## Git / PR Workflow
 
-- Branch names must use prefix: `codex/...`
+- Branch names should use prefix: `<agent-name>/...`
+- Valid `<agent-name>` values come from the built-in agent registry (`bin/agent-registry.json`), currently:
+  - `openclaw`
+  - `codex`
+  - `claude`
+  - `cursor`
+  - `cline`
+  - `codebuddy`
+  - `trae`
+  - `opencode`
 - Keep commits focused and reviewable.
 - Default PR flow: create branch -> push -> open PR -> stop.
 - Do **not** merge PRs automatically (including `gh pr merge`) unless the user explicitly asks to merge.
