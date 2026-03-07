@@ -32,6 +32,10 @@
   - respect `frozen` immutability for content-derived fields
   - maintain legacy key aliases
 - Updated `sync` to exclude `disabled` and `deleted` skills by default.
+- Hardened `sync --mode symlink` to:
+  - short-circuit same-realpath writes
+  - resolve destination parent symlinks before computing relative link targets
+  - safely replace broken or circular destination symlinks
 - Updated `doctor` to validate canonical registry index integrity.
 - Added governance tests and updated smoke flow.
 - Updated docs (`README.md`, `COMPATIBILITY.md`) and bumped CLI/package version to `0.1.2`.

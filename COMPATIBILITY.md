@@ -41,6 +41,9 @@ SkillsDock v0.1.2 supports both **user scope** and **project scope** for each bu
 - Same format + non-package source: symlink (default mode) or copy.
 - `.skill` source package: extracted and copied as converted content.
 - Cross-format sync: converted and copied.
+- Symlink writes resolve destination parent realpaths before computing relative link targets.
+- If source and destination already resolve to the same real path, the sync write is skipped.
+- Existing broken or circular destination symlinks are replaced safely before writing.
 - If symlink fails and fallback is `copy`, SkillsDock writes copied content and reports a warning.
 - Governance tag behavior:
   - `regular` and `frozen` are eligible for sync.

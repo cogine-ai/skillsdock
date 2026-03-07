@@ -111,6 +111,9 @@ Behavior:
 
 - If format conversion is needed, sync auto-copies (symlink is not possible).
 - If symlink fails and fallback is `copy`, SkillsDock copies and prints a warning.
+- Symlink mode resolves destination parent symlinks before computing the link target, so symlinked target roots do not produce broken links.
+- If source and destination already resolve to the same real path, sync is a no-op for that item.
+- Existing broken or circular destination symlinks are replaced safely during sync.
 - Atomic copy writes are used (`tmp` + `rename`).
 
 ## Supported Formats

@@ -2441,10 +2441,55 @@ async function writeFileAtomic(filePath, content) {
   }
 }
 
+async function getRealpathOrNull(filePath) {
+  try {
+    return await fs.realpath(filePath);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    if (code === 'ENOENT' || code === 'ELOOP') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function buildComparablePathSet(filePath, realPath) {
+  const candidates = new Set([path.resolve(filePath)]);
+  if (realPath) candidates.add(path.resolve(realPath));
+  return candidates;
+}
+
+async function pathsResolveSameLocation(leftPath, rightPath) {
+  const [leftRealPath, rightRealPath] = await Promise.all([
+    getRealpathOrNull(leftPath),
+    getRealpathOrNull(rightPath)
+  ]);
+
+  const leftCandidates = buildComparablePathSet(leftPath, leftRealPath);
+  const rightCandidates = buildComparablePathSet(rightPath, rightRealPath);
+
+  for (const candidate of leftCandidates) {
+    if (rightCandidates.has(candidate)) return true;
+  }
+  return false;
+}
+
+function getRelativeSymlinkTarget(parentPath, targetPath) {
+  const relativeTarget = path.relative(parentPath, targetPath);
+  if (!relativeTarget) return path.basename(targetPath);
+  if (path.isAbsolute(relativeTarget)) return targetPath;
+  return relativeTarget;
+}
+
 async function createSymlink(filePath, sourcePath) {
   await ensureParentDir(filePath);
-  await removeFileOrSymlinkIfExists(filePath);
-  await fs.symlink(sourcePath, filePath);
+  const realParentPath = await fs.realpath(path.dirname(filePath));
+  const realTargetPath = (await getRealpathOrNull(sourcePath)) || path.resolve(sourcePath);
+  const resolvedLinkPath = path.join(realParentPath, path.basename(filePath));
+  const relativeTarget = getRelativeSymlinkTarget(realParentPath, realTargetPath);
+
+  await removeFileOrSymlinkIfExists(resolvedLinkPath);
+  await fs.symlink(relativeTarget, resolvedLinkPath);
 }
 
 async function cmdSync(flags, context) {
@@ -2508,6 +2553,10 @@ async function cmdSync(flags, context) {
       if (plan.effectiveMode === 'symlink') counters.symlinked += 1;
       else if (plan.fallbackUsed) counters.fallbackCopied += 1;
       else counters.copied += 1;
+      continue;
+    }
+
+    if (await pathsResolveSameLocation(item.sourcePath, dest)) {
       continue;
     }
 
