@@ -11,10 +11,14 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'bin', 'skillsdock.mjs');
 
-function runCli(args, cwd) {
+function runCli(args, cwd, envOverrides = {}) {
   return spawnSync(process.execPath, [cliPath, ...args], {
     cwd,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...envOverrides
+    }
   });
 }
 
@@ -149,6 +153,42 @@ test('sync short-circuits when source and destination already resolve to the sam
   assert.equal(await readFile(sourceFile, 'utf8'), content);
 });
 
+test('sync dry-run marks same-realpath items as skipped', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-dry-run-same-realpath-'));
+  const sourceDir = path.join(base, 'source');
+  const aliasedTargetRoot = path.join(base, 'target-link');
+
+  await writeDemoSkill(sourceDir);
+  await symlink(sourceDir, aliasedTargetRoot);
+
+  const { configPath, registryPath } = await configureAndScan(base, sourceDir, aliasedTargetRoot);
+  const result = runCli(
+    [
+      'sync',
+      '--to',
+      'fixture',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'fail',
+      '--dry-run'
+    ],
+    base
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Dry run: 0 file\(s\) would be synced .*skipped=1/);
+  assert.match(result.stdout, /Result: .*skipped=1/);
+  assert.match(result.stdout, /\bskipped\b/);
+  assert.match(result.stdout, /\bsame-realpath\b/);
+});
+
 test('sync replaces an existing ELOOP destination symlink with a valid symlink', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-eloop-'));
   const sourceDir = path.join(base, 'source');
@@ -189,4 +229,60 @@ test('sync replaces an existing ELOOP destination symlink with a valid symlink',
   assert.equal(destStat.isSymbolicLink(), true);
   assert.equal(await realpath(destPath), sourceRealPath);
   assert.equal(await readlink(destPath), await expectedRelativeLink(destPath, sourceRealPath));
+});
+
+test('sync falls back to copy when symlink creation fails and --fallback copy is set', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-fallback-copy-'));
+  const sourceDir = path.join(base, 'source');
+  const targetRoot = path.join(base, 'target');
+  const hookPath = path.join(base, 'force-symlink-failure.cjs');
+
+  const { content } = await writeDemoSkill(sourceDir);
+  await mkdir(targetRoot, { recursive: true });
+  await writeFile(
+    hookPath,
+    `const fsPromises = require('node:fs/promises');
+const originalSymlink = fsPromises.symlink;
+fsPromises.symlink = async (...args) => {
+  const error = new Error('synthetic symlink failure');
+  error.code = 'EPERM';
+  throw error;
+};
+fsPromises.symlink.original = originalSymlink;
+`,
+    'utf8'
+  );
+
+  const { configPath, registryPath } = await configureAndScan(base, sourceDir, targetRoot);
+  const result = runCli(
+    [
+      'sync',
+      '--to',
+      'fixture',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'copy'
+    ],
+    base,
+    {
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${hookPath}`].filter(Boolean).join(' ')
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /WARN: symlink failed; fallback copied demo ->/);
+  assert.match(result.stdout, /Result: .*fallbackCopied=1 .*failed=0/);
+
+  const destPath = path.join(targetRoot, 'demo', 'SKILL.md');
+  const destStat = await lstat(destPath);
+  assert.equal(destStat.isSymbolicLink(), false);
+  assert.equal(destStat.isFile(), true);
+  assert.equal(await readFile(destPath, 'utf8'), content);
 });

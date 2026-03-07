@@ -2598,24 +2598,25 @@ async function cmdSync(flags, context) {
       fallbackMode: fallback,
       requiresConversion: payload.requiresConversion
     });
+    const sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
 
     previews.push({
       id: item.id,
       format: `${item.sourceFormat} -> ${targetFormat}`,
-      action: plan.effectiveMode,
-      reason: plan.reason,
+      action: sameLocation ? 'skipped' : plan.effectiveMode,
+      reason: sameLocation ? 'same-realpath' : plan.reason,
       to: dest
     });
+
+    if (sameLocation) {
+      counters.skipped += 1;
+      continue;
+    }
 
     if (dryRun) {
       if (plan.effectiveMode === 'symlink') counters.symlinked += 1;
       else if (plan.fallbackUsed) counters.fallbackCopied += 1;
       else counters.copied += 1;
-      continue;
-    }
-
-    if (await pathsResolveSameLocation(item.sourcePath, dest)) {
-      counters.skipped += 1;
       continue;
     }
 
@@ -2658,7 +2659,9 @@ async function cmdSync(flags, context) {
   }
 
   if (dryRun) {
-    console.log(`Dry run: ${previews.length} file(s) would be synced to ${targetKey} -> ${basePath}`);
+    console.log(
+      `Dry run: ${items.length - counters.skipped} file(s) would be synced to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+    );
     printTable(previews.slice(0, 20), [
       { label: 'ID', get: (row) => row.id, min: 12, max: 30 },
       { label: 'Format', get: (row) => row.format, min: 16, max: 30 },
