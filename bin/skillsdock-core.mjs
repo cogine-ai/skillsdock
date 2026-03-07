@@ -2598,13 +2598,21 @@ async function cmdSync(flags, context) {
       fallbackMode: fallback,
       requiresConversion: payload.requiresConversion
     });
-    const sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
+    let sameLocation = false;
+    let previewReason = plan.reason;
+
+    try {
+      sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
+      if (sameLocation) previewReason = 'same-realpath';
+    } catch {
+      previewReason = 'unknown-realpath';
+    }
 
     previews.push({
       id: item.id,
       format: `${item.sourceFormat} -> ${targetFormat}`,
       action: sameLocation ? 'skipped' : plan.effectiveMode,
-      reason: sameLocation ? 'same-realpath' : plan.reason,
+      reason: previewReason,
       to: dest
     });
 
@@ -2676,8 +2684,9 @@ async function cmdSync(flags, context) {
     return;
   }
 
+  const successCount = counters.symlinked + counters.copied + counters.fallbackCopied;
   console.log(
-    `Synced ${items.length - counters.skipped} skill file(s) to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+    `Synced ${successCount} skill file(s) to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
   );
   console.log(
     `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`

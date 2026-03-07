@@ -189,6 +189,66 @@ test('sync dry-run marks same-realpath items as skipped', async () => {
   assert.match(result.stdout, /\bsame-realpath\b/);
 });
 
+test('sync treats same-location realpath failures as best-effort and continues', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-realpath-best-effort-'));
+  const sourceDir = path.join(base, 'source');
+  const targetRoot = path.join(base, 'target');
+  const hookPath = path.join(base, 'force-realpath-failure.cjs');
+
+  const { sourceFile } = await writeDemoSkill(sourceDir);
+  await mkdir(targetRoot, { recursive: true });
+  await writeFile(
+    hookPath,
+    `const path = require('node:path');
+const fsPromises = require('node:fs/promises');
+const originalRealpath = fsPromises.realpath;
+fsPromises.realpath = async (inputPath, ...rest) => {
+  const normalized = String(inputPath);
+  if (normalized.endsWith(path.join('target', 'demo', 'SKILL.md'))) {
+    const error = new Error('synthetic realpath failure');
+    error.code = 'EPERM';
+    throw error;
+  }
+  return originalRealpath.call(fsPromises, inputPath, ...rest);
+};
+`,
+    'utf8'
+  );
+
+  const { configPath, registryPath } = await configureAndScan(base, sourceDir, targetRoot);
+  const result = runCli(
+    [
+      'sync',
+      '--to',
+      'fixture',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'fail'
+    ],
+    base,
+    {
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${hookPath}`].filter(Boolean).join(' ')
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Synced 1 skill file\(s\).*skipped=0/);
+
+  const destPath = path.join(targetRoot, 'demo', 'SKILL.md');
+  const sourceRealPath = await realpath(sourceFile);
+  const destStat = await lstat(destPath);
+
+  assert.equal(destStat.isSymbolicLink(), true);
+  assert.equal(await realpath(destPath), sourceRealPath);
+});
+
 test('sync replaces an existing ELOOP destination symlink with a valid symlink', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-eloop-'));
   const sourceDir = path.join(base, 'source');
@@ -201,6 +261,48 @@ test('sync replaces an existing ELOOP destination symlink with a valid symlink',
   const destPath = path.join(targetRoot, 'demo', 'SKILL.md');
   await mkdir(path.dirname(destPath), { recursive: true });
   await symlink('SKILL.md', destPath);
+
+  const result = runCli(
+    [
+      'sync',
+      '--to',
+      'fixture',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'fail'
+    ],
+    base
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const sourceRealPath = await realpath(sourceFile);
+  const destStat = await lstat(destPath);
+
+  assert.equal(destStat.isSymbolicLink(), true);
+  assert.equal(await realpath(destPath), sourceRealPath);
+  assert.equal(await readlink(destPath), await expectedRelativeLink(destPath, sourceRealPath));
+});
+
+test('sync replaces an existing broken destination symlink with a valid symlink', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-sync-broken-link-'));
+  const sourceDir = path.join(base, 'source');
+  const targetRoot = path.join(base, 'target');
+
+  const { sourceFile } = await writeDemoSkill(sourceDir);
+  await mkdir(targetRoot, { recursive: true });
+
+  const { configPath, registryPath } = await configureAndScan(base, sourceDir, targetRoot);
+  const destPath = path.join(targetRoot, 'demo', 'SKILL.md');
+  await mkdir(path.dirname(destPath), { recursive: true });
+  await symlink('nonexistent', destPath);
 
   const result = runCli(
     [
@@ -277,6 +379,7 @@ fsPromises.symlink.original = originalSymlink;
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Synced 1 skill file\(s\).*skipped=0/);
   assert.match(result.stdout, /WARN: symlink failed; fallback copied demo ->/);
   assert.match(result.stdout, /Result: .*fallbackCopied=1 .*failed=0/);
 
