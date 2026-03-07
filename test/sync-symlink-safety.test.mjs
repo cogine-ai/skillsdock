@@ -140,6 +140,8 @@ test('sync short-circuits when source and destination already resolve to the sam
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Synced 0 skill file\(s\).*skipped=1/);
+  assert.match(result.stdout, /Result: .*skipped=1/);
 
   const sourceStat = await lstat(sourceFile);
   assert.equal(sourceStat.isFile(), true);

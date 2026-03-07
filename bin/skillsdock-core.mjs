@@ -2440,7 +2440,9 @@ async function writeFileAtomic(filePath, content) {
         await removeFileOrSymlinkIfExists(filePath);
         await fs.rename(tmpPath, filePath);
         return;
-      } catch {}
+      } catch {
+        // Intentional no-op: swallow fallback error; will rethrow original renameError.
+      }
     }
     try {
       await fs.unlink(tmpPath);
@@ -2583,6 +2585,7 @@ async function cmdSync(flags, context) {
     symlinked: 0,
     copied: 0,
     fallbackCopied: 0,
+    skipped: 0,
     failed: 0
   };
   const previews = [];
@@ -2612,6 +2615,7 @@ async function cmdSync(flags, context) {
     }
 
     if (await pathsResolveSameLocation(item.sourcePath, dest)) {
+      counters.skipped += 1;
       continue;
     }
 
@@ -2664,14 +2668,16 @@ async function cmdSync(flags, context) {
     ]);
     if (previews.length > 20) console.log(`...and ${previews.length - 20} more`);
     console.log(
-      `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} failed=${counters.failed}`
+      `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`
     );
     return;
   }
 
-  console.log(`Synced ${items.length} skill file(s) to ${targetKey} -> ${basePath}`);
   console.log(
-    `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} failed=${counters.failed}`
+    `Synced ${items.length - counters.skipped} skill file(s) to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+  );
+  console.log(
+    `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`
   );
 
   if (counters.failed > 0) {
