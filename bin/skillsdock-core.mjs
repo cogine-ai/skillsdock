@@ -2417,6 +2417,14 @@ async function removeFileOrSymlinkIfExists(filePath) {
   }
 }
 
+/**
+ * 以原子方式将内容写入指定文件路径，确保在写入过程中不会留下部分写入的目标文件。
+ *
+ * 在写入临时文件并重命名到目标路径失败时，会尝试移除目标并重试重命名；临时文件在失败后会尝试清理。
+ *
+ * @param {string} filePath - 目标文件的完整路径。
+ * @param {string|Buffer} content - 要写入的内容（通常为字符串，函数以 UTF-8 编码写入）。
+ */
 async function writeFileAtomic(filePath, content) {
   await ensureParentDir(filePath);
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -2432,7 +2440,9 @@ async function writeFileAtomic(filePath, content) {
         await removeFileOrSymlinkIfExists(filePath);
         await fs.rename(tmpPath, filePath);
         return;
-      } catch {}
+      } catch {
+        // Intentional no-op: swallow fallback error; will rethrow original renameError.
+      }
     }
     try {
       await fs.unlink(tmpPath);
@@ -2441,12 +2451,104 @@ async function writeFileAtomic(filePath, content) {
   }
 }
 
-async function createSymlink(filePath, sourcePath) {
-  await ensureParentDir(filePath);
-  await removeFileOrSymlinkIfExists(filePath);
-  await fs.symlink(sourcePath, filePath);
+/**
+ * 尝试解析给定路径的真实（规范化）路径；在目标不存在或遇到符号链接循环时返回 null。
+ * @param {string} filePath - 要解析的文件或路径，可为相对或绝对路径。
+ * @returns {string|null} 解析后的真实路径字符串；如果路径不存在（ENOENT）或遇到符号链接环（ELOOP），返回 `null`。
+ * @throws {Error} 当发生除 ENOENT 或 ELOOP 以外的文件系统错误时抛出原始错误。
+ */
+async function getRealpathOrNull(filePath) {
+  try {
+    return await fs.realpath(filePath);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    if (code === 'ENOENT' || code === 'ELOOP') {
+      return null;
+    }
+    throw error;
+  }
 }
 
+/**
+ * 生成包含给定路径及其（若存在）真实路径的规范化绝对路径集合。
+ *
+ * @param {string} filePath - 要比较的原始路径（可能为相对路径）。
+ * @param {string|null|undefined} realPath - 可选的真实路径（例如来自 fs.realpath），若提供将一并加入集合。
+ * @returns {Set<string>} 包含规范化并解析为绝对路径的字符串集合，至少包含传入的 filePath，对 realPath 则在存在时也包含一项。
+ */
+function buildComparablePathSet(filePath, realPath) {
+  const candidates = new Set([path.resolve(filePath)]);
+  if (realPath) candidates.add(path.resolve(realPath));
+  return candidates;
+}
+
+/**
+ * 判断两个文件路径是否引用同一文件系统位置。
+ *
+ * 同时尝试解析两侧的真实路径（符号链接解析），并将原始路径与解析后的候选路径集合进行比较以决定是否等同。
+ *
+ * @param {string} leftPath - 左侧文件或路径。
+ * @param {string} rightPath - 右侧文件或路径。
+ * @returns {boolean} `true` 如果两者引用相同位置，`false` 否则。
+ */
+async function pathsResolveSameLocation(leftPath, rightPath) {
+  const [leftRealPath, rightRealPath] = await Promise.all([
+    getRealpathOrNull(leftPath),
+    getRealpathOrNull(rightPath)
+  ]);
+
+  const leftCandidates = buildComparablePathSet(leftPath, leftRealPath);
+  const rightCandidates = buildComparablePathSet(rightPath, rightRealPath);
+
+  for (const candidate of leftCandidates) {
+    if (rightCandidates.has(candidate)) return true;
+  }
+  return false;
+}
+
+/**
+ * 计算在给定父目录下创建符号链接时应使用的目标路径表示。
+ *
+ * @param {string} parentPath - 用作符号链接所在目录的父路径。
+ * @param {string} targetPath - 要指向的目标文件或目录路径（绝对或相对均可）。
+ * @returns {string} 在 parentPath 中用于创建符号链接的路径：当目标与父目录相同时返回目标的基本名；若计算得到的表示为绝对路径则返回原始 targetPath；否则返回相对于 parentPath 的相对路径。
+ */
+function getRelativeSymlinkTarget(parentPath, targetPath) {
+  const relativeTarget = path.relative(parentPath, targetPath);
+  if (!relativeTarget) return path.basename(targetPath);
+  if (path.isAbsolute(relativeTarget)) return targetPath;
+  return relativeTarget;
+}
+
+/**
+ * 在目标位置创建指向源路径的符号链接，确保父目录存在并安全替换已存在的文件或链接。
+ *
+ * 在创建链接前会解析相关路径并计算合适的相对链接目标，以便在可能的情况下使用相对引用并避免不必要的重复操作。
+ *
+ * @param {string} filePath - 将要创建的符号链接的完整目标路径（即链接文件的位置）。
+ * @param {string} sourcePath - 符号链接应指向的源路径（可以是文件或目录；支持相对或绝对路径）。
+ */
+async function createSymlink(filePath, sourcePath) {
+  await ensureParentDir(filePath);
+  const realParentPath = await fs.realpath(path.dirname(filePath));
+  const realTargetPath = (await getRealpathOrNull(sourcePath)) || path.resolve(sourcePath);
+  const resolvedLinkPath = path.join(realParentPath, path.basename(filePath));
+  const relativeTarget = getRelativeSymlinkTarget(realParentPath, realTargetPath);
+
+  await removeFileOrSymlinkIfExists(resolvedLinkPath);
+  await fs.symlink(relativeTarget, resolvedLinkPath);
+}
+
+/**
+ * 将已注册的技能文件同步到指定目标（创建符号链接或写入文件），并在需要时执行格式转换或回退复制。
+ *
+ * 逐个评估注册表中可同步的技能，基于命令行选项和目标配置决定对每个项目的实际写入策略（symlink 或 copy），可先进行 dry-run 预览；在非 dry-run 模式下会在目标位置创建符号链接或以原子方式写入文件，统计并输出同步结果。
+ *
+ * @param {Object} flags - 命令行标志与选项（例如：to/target、scope、mode、fallback、dry-run、config、registry、all）。
+ * @param {Object} context - 运行上下文，至少包含 projectRoot，用于解析模板路径等。
+ * @throws {Error} 当未指定有效目标（--to/--target）或目标解析失败时抛出。
+ * @throws {Error} 当提供了无效的 --mode 或 --fallback 值时抛出。
+ */
 async function cmdSync(flags, context) {
   const targetInput = flags.to || flags.target;
   if (!targetInput || typeof targetInput !== 'string') {
@@ -2483,6 +2585,7 @@ async function cmdSync(flags, context) {
     symlinked: 0,
     copied: 0,
     fallbackCopied: 0,
+    skipped: 0,
     failed: 0
   };
   const previews = [];
@@ -2495,14 +2598,28 @@ async function cmdSync(flags, context) {
       fallbackMode: fallback,
       requiresConversion: payload.requiresConversion
     });
+    let sameLocation = false;
+    let previewReason = plan.reason;
+
+    try {
+      sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
+      if (sameLocation) previewReason = 'same-realpath';
+    } catch {
+      previewReason = 'unknown-realpath';
+    }
 
     previews.push({
       id: item.id,
       format: `${item.sourceFormat} -> ${targetFormat}`,
-      action: plan.effectiveMode,
-      reason: plan.reason,
+      action: sameLocation ? 'skipped' : plan.effectiveMode,
+      reason: previewReason,
       to: dest
     });
+
+    if (sameLocation) {
+      counters.skipped += 1;
+      continue;
+    }
 
     if (dryRun) {
       if (plan.effectiveMode === 'symlink') counters.symlinked += 1;
@@ -2550,7 +2667,9 @@ async function cmdSync(flags, context) {
   }
 
   if (dryRun) {
-    console.log(`Dry run: ${previews.length} file(s) would be synced to ${targetKey} -> ${basePath}`);
+    console.log(
+      `Dry run: ${items.length - counters.skipped} file(s) would be synced to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+    );
     printTable(previews.slice(0, 20), [
       { label: 'ID', get: (row) => row.id, min: 12, max: 30 },
       { label: 'Format', get: (row) => row.format, min: 16, max: 30 },
@@ -2560,14 +2679,17 @@ async function cmdSync(flags, context) {
     ]);
     if (previews.length > 20) console.log(`...and ${previews.length - 20} more`);
     console.log(
-      `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} failed=${counters.failed}`
+      `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`
     );
     return;
   }
 
-  console.log(`Synced ${items.length} skill file(s) to ${targetKey} -> ${basePath}`);
+  const successCount = counters.symlinked + counters.copied + counters.fallbackCopied;
   console.log(
-    `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} failed=${counters.failed}`
+    `Synced ${successCount} skill file(s) to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+  );
+  console.log(
+    `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`
   );
 
   if (counters.failed > 0) {
