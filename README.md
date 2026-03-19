@@ -18,6 +18,10 @@ This repository is intentionally **CLI-only**.
   - default scan now includes `~/.agents/skills` and `${projectRoot}/.agents/skills`
   - `list` / `all-local-skills` collapse same-realpath canonical copies
   - universal `skill-md` sync writes canonical output without redundant native symlinks
+- Added plugin ownership metadata for `.claude-plugin` discovered skills:
+  - `scan` persists `pluginName` on registry items when ownership is declared by plugin manifests
+  - text `list` / `all-local-skills` render stable grouped sections for ungrouped and plugin-owned skills
+  - `--json` output keeps the existing `count` + `items` envelope and only adds fields
 
 ## Design Principle
 
@@ -50,6 +54,9 @@ skillsdock scan
 
 # governance view
 skillsdock all-local-skills
+
+# registry view
+skillsdock list
 
 # inspect one skill (path/key/id selector)
 skillsdock skill-detail my-skill --all-copies
@@ -142,7 +149,20 @@ SkillsDock v0.2.0 aligns local `SKILL.md` parsing with the conventions used by [
 - `metadata.internal: true` is treated as internal and skipped by default.
   - Set `INSTALL_INTERNAL_SKILLS=1` (or `true`) to include internal skills in `scan`.
 - Discovery prioritizes common skills directories and `.claude-plugin` manifest-declared paths, then recursively scans as fallback.
+- `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` ownership is persisted as `pluginName` on matching registry items.
 - Frontmatter parsing uses [gray-matter](https://github.com/jonschlinkert/gray-matter) for compatibility and YAML edge cases.
+
+### Grouped Text Views
+
+- `skillsdock list` prints stable sections in this order:
+  - `Ungrouped`
+  - each plugin name in lexical order
+  - `Mixed Plugin Ownership` (only when an aggregated row spans multiple plugin owners)
+- `skillsdock all-local-skills` uses the same grouped section ordering.
+- `--json` remains backward compatible:
+  - top-level shape is still `{ "count": number, "items": [...] }`
+  - registry items may now include `pluginName`
+  - aggregated `all-local-skills` rows may now include `pluginName` and `pluginNames`
 
 ### Skills Spec Validation
 
@@ -217,6 +237,8 @@ Registry version `2` includes:
   - `policy.tag`
   - `policy.reason`
   - `policy.updatedAt`
+- plugin ownership field:
+  - `pluginName`
 - structure manifest fields:
   - `structureManifest.entryFile`
   - `structureManifest.includedFiles`

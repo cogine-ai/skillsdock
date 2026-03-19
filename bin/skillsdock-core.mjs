@@ -480,13 +480,20 @@ function pushUniqueWarning(warnings, message) {
   if (!warnings.includes(message)) warnings.push(message);
 }
 
+function normalizePluginName(value) {
+  const pluginName = String(value || '').trim();
+  return pluginName.length > 0 ? pluginName : null;
+}
+
 async function getPluginSkillSearchResult(basePath) {
   const normalizedBasePath = path.resolve(basePath);
   const dirs = [];
   const seen = new Set();
   const warnings = [];
+  const ownerships = [];
+  const ownershipSeen = new Set();
 
-  const pushDir = (candidate, label) => {
+  const pushDir = (candidate, label, pluginName = null) => {
     const resolved = path.resolve(candidate);
     if (!isContainedIn(resolved, normalizedBasePath)) {
       pushUniqueWarning(
@@ -498,9 +505,18 @@ async function getPluginSkillSearchResult(basePath) {
     if (seen.has(resolved)) return;
     seen.add(resolved);
     dirs.push(resolved);
+    const normalizedPluginName = normalizePluginName(pluginName);
+    if (!normalizedPluginName) return;
+    const ownershipKey = `${resolved}::${normalizedPluginName}`;
+    if (ownershipSeen.has(ownershipKey)) return;
+    ownershipSeen.add(ownershipKey);
+    ownerships.push({
+      dir: resolved,
+      pluginName: normalizedPluginName
+    });
   };
 
-  const addPluginSkillDirs = (pluginBase, skills = [], label) => {
+  const addPluginSkillDirs = (pluginBase, skills = [], label, pluginName = null) => {
     const resolvedPluginBase = path.resolve(pluginBase);
     if (!isContainedIn(resolvedPluginBase, normalizedBasePath)) {
       pushUniqueWarning(
@@ -519,11 +535,11 @@ async function getPluginSkillSearchResult(basePath) {
           );
           continue;
         }
-        pushDir(path.dirname(path.join(resolvedPluginBase, skillPath)), `${label} skill path`);
+        pushDir(path.dirname(path.join(resolvedPluginBase, skillPath)), `${label} skill path`, pluginName);
       }
     }
 
-    pushDir(path.join(resolvedPluginBase, 'skills'), `${label} default skills dir`);
+    pushDir(path.join(resolvedPluginBase, 'skills'), `${label} default skills dir`, pluginName);
   };
 
   const marketplacePath = path.join(normalizedBasePath, '.claude-plugin', 'marketplace.json');
@@ -561,8 +577,12 @@ async function getPluginSkillSearchResult(basePath) {
       }
 
       const pluginBase = path.join(normalizedBasePath, pluginRoot, plugin.source || '');
+      const pluginName =
+        normalizePluginName(plugin.name) ||
+        normalizePluginName(plugin.id) ||
+        normalizePluginName(path.basename(pluginBase));
       const skillPaths = Array.isArray(plugin.skills) ? plugin.skills : [];
-      addPluginSkillDirs(pluginBase, skillPaths, label);
+      addPluginSkillDirs(pluginBase, skillPaths, label, pluginName);
     }
   } else if (marketplace !== null) {
     pushUniqueWarning(warnings, `Invalid marketplace.json format: expected JSON object`);
@@ -572,20 +592,39 @@ async function getPluginSkillSearchResult(basePath) {
   const pluginManifest = await readJsonIfExists(pluginPath);
   if (pluginManifest && typeof pluginManifest === 'object' && !Array.isArray(pluginManifest)) {
     const skillPaths = Array.isArray(pluginManifest.skills) ? pluginManifest.skills : [];
-    addPluginSkillDirs(normalizedBasePath, skillPaths, 'plugin.json');
+    const pluginName =
+      normalizePluginName(pluginManifest.name) ||
+      normalizePluginName(pluginManifest.metadata?.name) ||
+      normalizePluginName(path.basename(normalizedBasePath));
+    addPluginSkillDirs(normalizedBasePath, skillPaths, 'plugin.json', pluginName);
   } else if (pluginManifest !== null) {
     pushUniqueWarning(warnings, `Invalid plugin.json format: expected JSON object`);
   }
 
   return {
     dirs,
-    warnings
+    warnings,
+    ownerships
   };
 }
 
 async function getPluginSkillSearchDirs(basePath) {
   const result = await getPluginSkillSearchResult(basePath);
   return result.dirs;
+}
+
+function resolvePluginNameForFile(filePath, ownerships = []) {
+  const resolvedFilePath = path.resolve(filePath);
+  const matches = ownerships
+    .filter((entry) => entry && typeof entry === 'object')
+    .filter((entry) => normalizePluginName(entry.pluginName))
+    .filter((entry) => typeof entry.dir === 'string' && isContainedIn(resolvedFilePath, path.resolve(entry.dir)))
+    .sort((left, right) => {
+      if (right.dir.length !== left.dir.length) return right.dir.length - left.dir.length;
+      return String(left.pluginName).localeCompare(String(right.pluginName));
+    });
+
+  return matches.length > 0 ? normalizePluginName(matches[0].pluginName) : null;
 }
 
 async function collectPrioritySkillMdFiles(rootPath) {
@@ -1460,6 +1499,7 @@ function mergeRegistryItems(existing, incoming) {
   merged.content = mergeNonEmptyStrings(latest.content, older.content);
   merged.hash = mergeNonEmptyStrings(latest.hash, older.hash);
   merged.manifestHash = mergeNonEmptyStrings(latest.manifestHash, older.manifestHash || merged.hash);
+  merged.pluginName = normalizePluginName(latest.pluginName) || normalizePluginName(older.pluginName);
   merged.structureManifest = normalizeStructureManifest(
     latest.structureManifest || older.structureManifest,
     merged.canonicalPath,
@@ -1568,6 +1608,7 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     isInternal: Boolean(item.isInternal) || isInternalSkillMetadata(item.metadata),
     hash,
     manifestHash,
+    pluginName: normalizePluginName(item.pluginName),
     policy: normalizePolicy(item.policy),
     structureManifest: normalizeStructureManifest(item.structureManifest, canonicalPath, hash),
     state: String(item.state || 'active'),
@@ -1699,7 +1740,7 @@ async function cmdInit(flags, context) {
   console.log('\nNext step: skillsdock scan');
 }
 
-async function parseSkillRecord(filePath, source, sourceRoot, sourceFormat, scanConfig = DEFAULT_SCAN) {
+async function parseSkillRecord(filePath, source, sourceRoot, sourceFormat, scanConfig = DEFAULT_SCAN, options = {}) {
   const sourceName = source.name;
   const ext = path.extname(filePath).toLowerCase();
   let raw;
@@ -1721,6 +1762,7 @@ async function parseSkillRecord(filePath, source, sourceRoot, sourceFormat, scan
   const id = slugify(normalized.name || inferNameFromPath(filePath));
   const description = String(normalized.description || firstBodyLine(normalized.body));
   const isInternal = isInternalSkillMetadata(metadata);
+  const pluginName = normalizePluginName(options.pluginName);
 
   const resolvedSourceRoot = path.resolve(sourceRoot);
   let relativePath = path.basename(filePath);
@@ -1748,6 +1790,7 @@ async function parseSkillRecord(filePath, source, sourceRoot, sourceFormat, scan
     relativePath,
     sourceFormat,
     format: sourceFormat,
+    pluginName,
     createdAt: gitMeta?.createdAt || toIso(stat.birthtime) || toIso(stat.ctime),
     updatedAt: gitMeta?.updatedAt || toIso(stat.mtime),
     originRepo: gitMeta?.originRepo || null,
@@ -1837,6 +1880,9 @@ async function cmdScan(flags, positionalArgs, context) {
   for (const source of normalizedSourceInputs) {
     const sourceFormat = source.format;
     const sourcePath = source.sourcePath;
+    const pluginDiscovery =
+      sourceFormat === 'skill-md' ? await getPluginSkillSearchResult(sourcePath) : { ownerships: [] };
+    const pluginOwnerships = Array.isArray(pluginDiscovery.ownerships) ? pluginDiscovery.ownerships : [];
     const skillFiles = await collectSkillFiles(
       sourcePath,
       sourceFormat,
@@ -1875,6 +1921,7 @@ async function cmdScan(flags, positionalArgs, context) {
           realPath,
           sourcePath: canonicalPath,
           sourceFormat: existing.sourceFormat || sourceFormat,
+          pluginName: normalizePluginName(existing.pluginName) || resolvePluginNameForFile(filePath, pluginOwnerships),
           legacyKeys: Array.from(new Set(legacyKeys)),
           state: 'active',
           firstSeenAt: existing.firstSeenAt || now,
@@ -1887,7 +1934,9 @@ async function cmdScan(flags, positionalArgs, context) {
 
       let parsed;
       try {
-        parsed = await parseSkillRecord(filePath, source, sourcePath, sourceFormat, config.scan);
+        parsed = await parseSkillRecord(filePath, source, sourcePath, sourceFormat, config.scan, {
+          pluginName: resolvePluginNameForFile(filePath, pluginOwnerships)
+        });
       } catch {
         parseErrors += 1;
         continue;
@@ -2058,6 +2107,64 @@ function formatTagForDisplay(tag) {
   return String(tag || 'regular');
 }
 
+function getRowPluginNames(row) {
+  if (Array.isArray(row.pluginNames)) {
+    return toArrayUnique(row.pluginNames.map((entry) => normalizePluginName(entry)).filter(Boolean)).sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }
+  const pluginName = normalizePluginName(row?.pluginName);
+  return pluginName ? [pluginName] : [];
+}
+
+function buildPluginGroupedSections(rows) {
+  const ungrouped = [];
+  const mixed = [];
+  const grouped = new Map();
+
+  for (const row of rows) {
+    const pluginNames = getRowPluginNames(row);
+    if (pluginNames.length === 0) {
+      ungrouped.push(row);
+      continue;
+    }
+    if (pluginNames.length > 1) {
+      mixed.push(row);
+      continue;
+    }
+    const pluginName = pluginNames[0];
+    if (!grouped.has(pluginName)) grouped.set(pluginName, []);
+    grouped.get(pluginName).push(row);
+  }
+
+  const sections = [];
+  if (ungrouped.length > 0) {
+    sections.push({ label: `Ungrouped (${ungrouped.length})`, rows: ungrouped });
+  }
+
+  for (const pluginName of Array.from(grouped.keys()).sort((a, b) => a.localeCompare(b))) {
+    sections.push({
+      label: `Plugin: ${pluginName} (${grouped.get(pluginName).length})`,
+      rows: grouped.get(pluginName)
+    });
+  }
+
+  if (mixed.length > 0) {
+    sections.push({ label: `Mixed Plugin Ownership (${mixed.length})`, rows: mixed });
+  }
+
+  return sections;
+}
+
+function printGroupedTable(rows, columns) {
+  const sections = buildPluginGroupedSections(rows);
+  for (const [index, section] of sections.entries()) {
+    if (index > 0) console.log('');
+    console.log(section.label);
+    printTable(section.rows, columns);
+  }
+}
+
 function filterListItems(items, flags, registry) {
   let list = items.filter((item) => (flags.all ? true : item.state === 'active'));
   list = filterBySharedFlags(list, flags);
@@ -2114,8 +2221,9 @@ async function cmdList(flags) {
     return;
   }
 
-  printTable(list, [
+  printGroupedTable(list, [
     { label: 'ID', get: (row) => row.id, min: 12, max: 34 },
+    { label: 'Plugin', get: (row) => row.pluginName || '-', min: 8, max: 24 },
     { label: 'Source', get: (row) => row.sourceName, min: 8, max: 22 },
     { label: 'Format', get: (row) => row.sourceFormat, min: 8, max: 12 },
     { label: 'Tag', get: (row) => formatTagForDisplay(row.policy?.tag), min: 8, max: 10 },
@@ -2150,6 +2258,7 @@ async function cmdInspect(flags, positionalArgs) {
     .map((item) => ({
       key: item.key,
       canonicalPath: item.canonicalPath,
+      pluginName: item.pluginName || null,
       sourceName: item.sourceName,
       sourcePath: item.sourcePath,
       sourceFormat: item.sourceFormat,
@@ -2171,6 +2280,7 @@ async function cmdInspect(flags, positionalArgs) {
   console.log(`ID: ${matched.id}`);
   console.log(`Name: ${matched.name}`);
   console.log(`Description: ${matched.description}`);
+  console.log(`Plugin: ${matched.pluginName || '-'}`);
   console.log(`Source: ${matched.sourceName}`);
   console.log(`Format: ${matched.sourceFormat}`);
   console.log(`Path: ${matched.canonicalPath || matched.sourcePath}`);
@@ -2187,7 +2297,7 @@ async function cmdInspect(flags, positionalArgs) {
   console.log(`\nCopies: ${siblings.length}`);
   for (const sibling of siblings) {
     console.log(
-      `- ${sibling.isPrimary ? '[primary] ' : ''}${sibling.sourceName} (${sibling.sourceFormat}, ${sibling.tag}): ${
+      `- ${sibling.isPrimary ? '[primary] ' : ''}${sibling.sourceName} (${sibling.pluginName || '-'}, ${sibling.sourceFormat}, ${sibling.tag}): ${
         sibling.canonicalPath || sibling.sourcePath
       }`
     );
@@ -2248,6 +2358,9 @@ function aggregateAllLocalSkills(items) {
     const tags = toArrayUnique(entries.map((entry) => entry.policy?.tag || 'regular')).sort((a, b) =>
       a.localeCompare(b)
     );
+    const pluginNames = toArrayUnique(entries.map((entry) => normalizePluginName(entry.pluginName)).filter(Boolean)).sort(
+      (a, b) => a.localeCompare(b)
+    );
     const latestUpdatedAt = entries.reduce((acc, entry) => {
       if (!entry.updatedAt) return acc;
       if (!acc) return entry.updatedAt;
@@ -2262,6 +2375,8 @@ function aggregateAllLocalSkills(items) {
       formats: toArrayUnique(entries.map((entry) => entry.sourceFormat).filter(Boolean)).sort((a, b) =>
         a.localeCompare(b)
       ),
+      pluginName: pluginNames.length === 1 ? pluginNames[0] : null,
+      pluginNames,
       copies: entries.length,
       tag: tags.length === 1 ? tags[0] : 'mixed',
       updatedAt: latestUpdatedAt,
@@ -2295,8 +2410,9 @@ async function cmdAllLocalSkills(flags) {
     return;
   }
 
-  printTable(rows, [
+  printGroupedTable(rows, [
     { label: 'NAME', get: (row) => row.name, min: 12, max: 34 },
+    { label: 'PLUGIN', get: (row) => row.pluginName || (row.pluginNames?.length > 1 ? 'mixed' : '-'), min: 8, max: 24 },
     { label: 'TYPE', get: (row) => row.type, min: 7, max: 9 },
     { label: 'AGENTS', get: (row) => row.agents.join(','), min: 10, max: 30 },
     { label: 'FORMATS', get: (row) => row.formats.join(','), min: 10, max: 24 },
@@ -2313,6 +2429,7 @@ function createSkillDetailPayload(registry, item) {
     .map((entry) => ({
       key: entry.key,
       canonicalPath: entry.canonicalPath,
+      pluginName: entry.pluginName || null,
       sourceName: entry.sourceName,
       sourceScope: entry.sourceScope,
       sourceAgent: entry.sourceAgent,
@@ -2355,6 +2472,7 @@ async function cmdSkillDetail(flags, positionalArgs) {
     }
     console.log(`ID: ${detail.id}`);
     console.log(`Name: ${detail.name}`);
+    console.log(`Plugin: ${detail.pluginName || '-'}`);
     console.log(`Tag: ${formatTagForDisplay(detail.policy?.tag)}`);
     console.log(`State: ${detail.state}`);
     console.log(`Path: ${detail.canonicalPath}`);

@@ -70,9 +70,11 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
   - common directories (such as `skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/`, etc.)
   - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` declared skill paths
   - recursive scan fallback
+- Manifest-declared plugin ownership is persisted as `pluginName` on scanned registry items.
 - Frontmatter parsing is powered by `gray-matter`.
 - `skillsdock doctor --skills-spec` validates spec-convention compliance and plugin manifest path safety.
 - `list` and `all-local-skills` prefer canonical `.agents/skills` copies and collapse duplicate rows when multiple records resolve to the same real path.
+- Text `list` and `all-local-skills` output is grouped into stable `Ungrouped` and per-plugin sections; `--json` keeps the existing `count` + `items` envelope and only adds plugin metadata fields.
 
 ## Sync Format Behavior
 
