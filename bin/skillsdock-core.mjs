@@ -19,6 +19,9 @@ const DEFAULT_REGISTRY_PATH = path.join(APP_DIR, 'registry.json');
 const CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_REGISTRY_PATH = path.join(CORE_DIR, 'agent-registry.json');
 const AGENT_REGISTRY = loadAgentRegistry();
+const UNIVERSAL_CANONICAL_DIR = '.agents/skills';
+const USER_CANONICAL_SKILLS_PATH = `~/${UNIVERSAL_CANONICAL_DIR}`;
+const PROJECT_CANONICAL_SKILLS_PATH = `\${projectRoot}/${UNIVERSAL_CANONICAL_DIR}`;
 
 const VALID_SCOPE_SET = new Set(['user', 'project']);
 const VALID_FORMAT_SET = new Set(['skill-md', 'mdc', 'openclaw-md', 'opencode-md']);
@@ -118,6 +121,59 @@ function loadAgentRegistry() {
       }`
     );
   }
+}
+
+function findAgentRegistryEntry(agentId) {
+  return AGENT_REGISTRY.agents.find((entry) => entry.id === agentId) || null;
+}
+
+function isUniversalAgent(agentId) {
+  return findAgentRegistryEntry(agentId)?.installFamily === 'universal';
+}
+
+function isSkillMdFormat(format, filePath = '') {
+  return normalizeTargetFormat(format, filePath) === 'skill-md';
+}
+
+function getCanonicalSkillsPathTemplate(scope) {
+  return scope === 'project' ? PROJECT_CANONICAL_SKILLS_PATH : USER_CANONICAL_SKILLS_PATH;
+}
+
+function getCanonicalSkillAgentAliases(scope) {
+  return AGENT_REGISTRY.agents
+    .filter((agent) => agent.installFamily === 'universal')
+    .filter((agent) => agent.canonicalDir === UNIVERSAL_CANONICAL_DIR)
+    .filter((agent) => agent.scopes?.[scope])
+    .filter((agent) =>
+      isSkillMdFormat(
+        agent.scopes?.[scope]?.source?.format || agent.scopes?.[scope]?.target?.format,
+        agent.scopes?.[scope]?.source?.path || agent.scopes?.[scope]?.target?.path || ''
+      )
+    )
+    .map((agent) => ({
+      name: `${agent.id}-${scope}`,
+      agent: agent.id,
+      scope
+    }));
+}
+
+function makeCanonicalSourceEntry(scope) {
+  return {
+    name: `agents-${scope}`,
+    agent: null,
+    scope,
+    path: getCanonicalSkillsPathTemplate(scope),
+    format: 'skill-md',
+    optional: true,
+    sourceAliases: uniqueSourceAliases([
+      {
+        name: `agents-${scope}`,
+        agent: null,
+        scope
+      },
+      ...getCanonicalSkillAgentAliases(scope)
+    ])
+  };
 }
 
 function parseArgs(argv) {
@@ -984,6 +1040,35 @@ function makeTargetEntry(agent, scope, targetConfig) {
   };
 }
 
+function addSourceGroup(sourceGroups, source) {
+  const sourceGroupKey = `${source.path}::${source.format}`;
+  const existingSource = sourceGroups.get(sourceGroupKey);
+  if (existingSource) {
+    existingSource.sourceAliases = uniqueSourceAliases([
+      ...(existingSource.sourceAliases || []),
+      ...(source.sourceAliases || []),
+      {
+        name: source.name,
+        agent: source.agent,
+        scope: source.scope
+      }
+    ]);
+    return;
+  }
+
+  sourceGroups.set(sourceGroupKey, {
+    ...source,
+    sourceAliases: uniqueSourceAliases([
+      ...(source.sourceAliases || []),
+      {
+        name: source.name,
+        agent: source.agent,
+        scope: source.scope
+      }
+    ])
+  });
+}
+
 function getDetectInstalledPaths(scopeConfig) {
   const detectInstalled = scopeConfig?.detectInstalled;
   if (!detectInstalled || typeof detectInstalled !== 'object') return [];
@@ -1019,6 +1104,10 @@ function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
   const sourceGroups = new Map();
   const targets = {};
 
+  for (const scope of ['user', 'project']) {
+    addSourceGroup(sourceGroups, makeCanonicalSourceEntry(scope));
+  }
+
   for (const agent of AGENT_REGISTRY.agents) {
     for (const scope of ['user', 'project']) {
       const scopeConfig = agent.scopes?.[scope];
@@ -1026,29 +1115,7 @@ function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
 
       const source = makeSourceEntry(agent, scope, scopeConfig.source);
       const target = makeTargetEntry(agent, scope, scopeConfig.target);
-      const sourceGroupKey = `${source.path}::${source.format}`;
-      const existingSource = sourceGroups.get(sourceGroupKey);
-      if (existingSource) {
-        existingSource.sourceAliases = uniqueSourceAliases([
-          ...(existingSource.sourceAliases || []),
-          {
-            name: source.name,
-            agent: source.agent,
-            scope: source.scope
-          }
-        ]);
-      } else {
-        sourceGroups.set(sourceGroupKey, {
-          ...source,
-          sourceAliases: uniqueSourceAliases([
-            {
-              name: source.name,
-              agent: source.agent,
-              scope: source.scope
-            }
-          ])
-        });
-      }
+      addSourceGroup(sourceGroups, source);
       targets[target.name] = target;
     }
   }
@@ -1233,6 +1300,48 @@ function normalizeStructureManifest(manifest, canonicalPath, fileHash = null) {
       ? manifest.parseWarnings.map((entry) => String(entry))
       : []
   };
+}
+
+function isCanonicalSkillPath(candidatePath, options = {}) {
+  if (!candidatePath) return false;
+  let currentPath = path.resolve(candidatePath);
+
+  while (true) {
+    const parentPath = path.dirname(currentPath);
+    if (path.basename(currentPath) === 'skills' && path.basename(parentPath) === '.agents') {
+      return true;
+    }
+    if (parentPath === currentPath) {
+      return false;
+    }
+    currentPath = parentPath;
+  }
+}
+
+function pickPreferredCanonicalPath(candidates, options = {}) {
+  const unique = Array.from(
+    new Set(
+      candidates
+        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+        .map((entry) => path.resolve(entry))
+    )
+  );
+
+  if (unique.length === 0) return null;
+
+  unique.sort((left, right) => {
+    const leftCanonical = isCanonicalSkillPath(left, options);
+    const rightCanonical = isCanonicalSkillPath(right, options);
+    if (leftCanonical !== rightCanonical) {
+      return leftCanonical ? -1 : 1;
+    }
+    if (left.length !== right.length) {
+      return left.length - right.length;
+    }
+    return left.localeCompare(right);
+  });
+
+  return unique[0];
 }
 
 function toTimestampForSort(value) {
@@ -1420,7 +1529,8 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
   const item = rawItem && typeof rawItem === 'object' ? rawItem : {};
   const sourcePath = item.canonicalPath || item.sourcePath || extractLegacyPathFromKey(legacyKey) || legacyKey;
   const canonicalPath = normalizePath(sourcePath);
-  const key = makeCanonicalKey(canonicalPath);
+  const realPath = normalizePath(item.realPath || canonicalPath);
+  const key = makeCanonicalKey(realPath);
   const hash = String(item.hash || '');
   const normalized = {
     name: String(item.normalized?.name || item.name || inferNameFromPath(canonicalPath)),
@@ -1448,6 +1558,7 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     ...item,
     key,
     canonicalPath,
+    realPath,
     sourcePath: canonicalPath,
     legacyKeys,
     id: String(item.id || slugify(normalized.name || inferNameFromPath(canonicalPath))),
@@ -1714,7 +1825,7 @@ async function cmdScan(flags, positionalArgs, context) {
     });
   }
 
-  const seenCanonicalPaths = new Set();
+  const seenRegistryKeys = new Set();
   const includeInternal = shouldInstallInternalSkills();
   let discovered = 0;
   let created = 0;
@@ -1735,21 +1846,33 @@ async function cmdScan(flags, positionalArgs, context) {
     discovered += skillFiles.length;
 
     for (const filePath of skillFiles) {
-      const canonicalPath = normalizePath(filePath);
-      seenCanonicalPaths.add(canonicalPath);
-      const canonicalKey = makeCanonicalKey(canonicalPath);
-      const existing = registry.items[canonicalKey];
+      const normalizedPath = normalizePath(filePath);
+      const realPath = (await getRealpathOrNull(normalizedPath)) || normalizedPath;
+      const realKey = makeCanonicalKey(realPath);
+      const pathKey = makeCanonicalKey(normalizedPath);
+      const existing = registry.items[realKey] || registry.items[pathKey];
+      const canonicalPath = pickPreferredCanonicalPath(
+        [existing?.canonicalPath, normalizedPath, realPath],
+        context
+      );
+      seenRegistryKeys.add(realKey);
       const sourceAliases = uniqueSourceAliases([...(source.sourceAliases || []), ...getItemSourceAliases(existing)]);
       const primaryAlias = sourceAliases[0] || normalizeSourceAlias(source);
       const legacyKeys = Array.from(
-        new Set([...(existing?.legacyKeys || []), ...sourceAliases.map((alias) => `${alias.name}:${canonicalPath}`)])
+        new Set([
+          ...(existing?.legacyKeys || []),
+          normalizedPath,
+          pathKey !== realKey ? pathKey : null,
+          ...sourceAliases.map((alias) => `${alias.name}:${normalizedPath}`)
+        ].filter(Boolean))
       );
 
       if (existing && isFrozen(existing)) {
-        registry.items[canonicalKey] = setItemSourceAliases({
+        registry.items[realKey] = setItemSourceAliases({
           ...existing,
-          key: canonicalKey,
+          key: realKey,
           canonicalPath,
+          realPath,
           sourcePath: canonicalPath,
           sourceFormat: existing.sourceFormat || sourceFormat,
           legacyKeys: Array.from(new Set(legacyKeys)),
@@ -1757,6 +1880,7 @@ async function cmdScan(flags, positionalArgs, context) {
           firstSeenAt: existing.firstSeenAt || now,
           lastSeenAt: now
         }, sourceAliases, primaryAlias);
+        if (pathKey !== realKey) delete registry.items[pathKey];
         unchanged += 1;
         continue;
       }
@@ -1781,11 +1905,12 @@ async function cmdScan(flags, positionalArgs, context) {
       else if (changed) updated += 1;
       else unchanged += 1;
 
-      registry.items[canonicalKey] = setItemSourceAliases({
+      registry.items[realKey] = setItemSourceAliases({
         ...existing,
         ...parsed,
-        key: canonicalKey,
+        key: realKey,
         canonicalPath,
+        realPath,
         sourcePath: canonicalPath,
         legacyKeys: Array.from(new Set(legacyKeys)),
         policy: normalizePolicy(existing?.policy, existing?.policy?.updatedAt || now),
@@ -1794,6 +1919,7 @@ async function cmdScan(flags, positionalArgs, context) {
         lastSeenAt: now,
         changedAt: changed ? now : existing?.changedAt || existing?.firstSeenAt || now
       }, sourceAliases, primaryAlias);
+      if (pathKey !== realKey) delete registry.items[pathKey];
     }
   }
 
@@ -1801,7 +1927,7 @@ async function cmdScan(flags, positionalArgs, context) {
   const scannedSourceSet = new Set(scannedSourceNames);
   for (const [key, item] of Object.entries(registry.items || {})) {
     if (![...scannedSourceSet].some((sourceName) => itemMatchesSourceName(item, sourceName))) continue;
-    if (seenCanonicalPaths.has(item.canonicalPath)) continue;
+    if (seenRegistryKeys.has(key)) continue;
     if (item.state !== 'missing') missing += 1;
     registry.items[key] = {
       ...item,
@@ -1954,6 +2080,20 @@ function filterListItems(items, flags, registry) {
 
   if (!flags.all) {
     list = list.filter((item) => item.isPrimary);
+    const deduped = new Map();
+    for (const item of list) {
+      const identityKey = String(item.realPath || item.canonicalPath || item.sourcePath || item.key);
+      const existing = deduped.get(identityKey);
+      if (!existing) {
+        deduped.set(identityKey, item);
+        continue;
+      }
+      const preferred = pickPreferredCanonicalPath(
+        [existing.canonicalPath, item.canonicalPath]
+      );
+      deduped.set(identityKey, preferred === item.canonicalPath ? item : existing);
+    }
+    list = Array.from(deduped.values());
   }
 
   return list;
@@ -2084,16 +2224,27 @@ function computeSkillType(entries) {
 function aggregateAllLocalSkills(items) {
   const groups = new Map();
   for (const item of items) {
+    const identityKey = String(item.realPath || item.canonicalPath || item.sourcePath || item.key);
     const groupKey = String(item.normalized?.name || item.id || item.name || '').trim().toLowerCase();
-    const key = groupKey || String(item.id || item.key);
+    const key = groupKey || identityKey;
     if (!groups.has(key)) {
-      groups.set(key, []);
+      groups.set(key, new Map());
     }
-    groups.get(key).push(item);
+    const groupItems = groups.get(key);
+    const existing = groupItems.get(identityKey);
+    if (!existing) {
+      groupItems.set(identityKey, item);
+      continue;
+    }
+    const preferred = pickPreferredCanonicalPath(
+      [existing.canonicalPath, item.canonicalPath]
+    );
+    groupItems.set(identityKey, preferred === item.canonicalPath ? item : existing);
   }
 
   const rows = [];
-  for (const entries of groups.values()) {
+  for (const entriesMap of groups.values()) {
+    const entries = Array.from(entriesMap.values());
     const tags = toArrayUnique(entries.map((entry) => entry.policy?.tag || 'regular')).sort((a, b) =>
       a.localeCompare(b)
     );
@@ -2599,6 +2750,161 @@ async function removeFileOrSymlinkIfExists(filePath) {
   }
 }
 
+async function executePlannedSyncWrite(item, dest, targetFormat, mode, fallback, dryRun) {
+  const payload = convertContentToFormat(item, targetFormat);
+  const plan = planSyncWriteMode({
+    requestedMode: mode,
+    fallbackMode: fallback,
+    requiresConversion: payload.requiresConversion
+  });
+
+  let sameLocation = false;
+  let reason = plan.reason;
+  try {
+    sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
+    if (sameLocation) reason = 'same-realpath';
+  } catch {
+    reason = 'unknown-realpath';
+  }
+
+  if (sameLocation) {
+    return {
+      status: 'skipped',
+      preview: {
+        id: item.id,
+        format: `${item.sourceFormat} -> ${targetFormat}`,
+        action: 'skipped',
+        reason,
+        to: dest
+      }
+    };
+  }
+
+  const preview = {
+    id: item.id,
+    format: `${item.sourceFormat} -> ${targetFormat}`,
+    action: plan.effectiveMode,
+    reason,
+    to: dest
+  };
+
+  if (dryRun) {
+    return {
+      status: plan.effectiveMode === 'symlink' ? 'symlinked' : plan.fallbackUsed ? 'fallbackCopied' : 'copied',
+      preview
+    };
+  }
+
+  if (plan.effectiveMode === 'symlink') {
+    try {
+      await createSymlink(dest, item.sourcePath);
+      return { status: 'symlinked', preview };
+    } catch (error) {
+      if (plan.fallbackMode !== 'copy') {
+        return {
+          status: 'failed',
+          preview,
+          warning: `WARN: failed symlink for ${item.id} -> ${dest}: ${error.message}`
+        };
+      }
+      try {
+        await writeFileAtomic(dest, payload.content);
+        return {
+          status: 'fallbackCopied',
+          preview,
+          warning: `WARN: symlink failed; fallback copied ${item.id} -> ${dest}`
+        };
+      } catch (copyError) {
+        return {
+          status: 'failed',
+          preview,
+          warning: `WARN: fallback copy failed for ${item.id} -> ${dest}: ${copyError.message}`
+        };
+      }
+    }
+  }
+
+  try {
+    await writeFileAtomic(dest, payload.content);
+    return {
+      status: plan.fallbackUsed ? 'fallbackCopied' : 'copied',
+      preview,
+      warning:
+        plan.fallbackUsed && plan.reason === 'conversion' && mode === 'symlink'
+          ? `WARN: conversion required; copied ${item.id} -> ${dest} instead of symlink`
+          : null
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      preview,
+      warning: `WARN: failed to write ${item.id} -> ${dest}: ${error.message}`
+    };
+  }
+}
+
+async function executeMirrorSymlink(item, sourcePath, destPath, dryRun) {
+  let sameLocation = false;
+  try {
+    sameLocation = await pathsResolveSameLocation(sourcePath, destPath);
+  } catch {}
+
+  const preview = {
+    id: item.id,
+    format: `${item.sourceFormat} -> mirror`,
+    action: 'symlink',
+    reason: 'mirror',
+    to: destPath
+  };
+
+  if (sameLocation) {
+    return {
+      status: 'skipped',
+      preview: {
+        ...preview,
+        action: 'skipped',
+        reason: 'same-realpath'
+      }
+    };
+  }
+  if (dryRun) {
+    return { status: 'symlinked', preview };
+  }
+
+  try {
+    await createSymlink(destPath, sourcePath);
+    return { status: 'symlinked', preview };
+  } catch (error) {
+    return {
+      status: 'failed',
+      preview: {
+        ...preview,
+        action: 'failed',
+        reason: 'mirror-failed'
+      },
+      warning: `WARN: failed to mirror canonical symlink ${destPath} -> ${sourcePath}: ${error.message}`
+    };
+  }
+}
+
+function combineSyncStatuses(primaryStatus, mirrorStatus = null) {
+  if (!mirrorStatus || mirrorStatus === 'skipped') {
+    return primaryStatus;
+  }
+  if (mirrorStatus === 'failed') {
+    return 'failed';
+  }
+  return mirrorStatus;
+}
+
+function incrementSyncCounter(counters, status) {
+  if (status === 'skipped') counters.skipped += 1;
+  else if (status === 'symlinked') counters.symlinked += 1;
+  else if (status === 'copied') counters.copied += 1;
+  else if (status === 'fallbackCopied') counters.fallbackCopied += 1;
+  else counters.failed += 1;
+}
+
 /**
  * 以原子方式将内容写入指定文件路径，确保在写入过程中不会留下部分写入的目标文件。
  *
@@ -2762,6 +3068,22 @@ async function cmdSync(flags, context) {
 
   const basePath = resolveTemplatePath(targetCfg.path, { projectRoot });
   const targetFormat = normalizeTargetFormat(targetCfg.format, targetCfg.path);
+  const targetAgentId = targetCfg.agent || String(targetKey).replace(/-(user|project)$/, '');
+  const registryAgent = findAgentRegistryEntry(targetAgentId);
+  const scopeValue = targetCfg.scope || scope || 'user';
+  const useCanonicalSkillTarget = Boolean(registryAgent) && isSkillMdFormat(targetFormat, targetCfg.path);
+  const isUniversalSkillTarget = useCanonicalSkillTarget && isUniversalAgent(targetAgentId);
+  const canonicalBasePath = useCanonicalSkillTarget
+    ? resolveTemplatePath(getCanonicalSkillsPathTemplate(scopeValue), { projectRoot })
+    : null;
+  const canonicalTargetCfg = useCanonicalSkillTarget
+    ? {
+        path: getCanonicalSkillsPathTemplate(scopeValue),
+        format: 'skill-md',
+        layout: 'nested',
+        filename: 'SKILL.md'
+      }
+    : null;
 
   const counters = {
     symlinked: 0,
@@ -2773,84 +3095,53 @@ async function cmdSync(flags, context) {
   const previews = [];
 
   for (const item of items) {
-    const dest = getTargetFilePath(basePath, targetCfg, item);
-    const payload = convertContentToFormat(item, targetFormat);
-    const plan = planSyncWriteMode({
-      requestedMode: mode,
-      fallbackMode: fallback,
-      requiresConversion: payload.requiresConversion
-    });
-    let sameLocation = false;
-    let previewReason = plan.reason;
+    const primaryDest = useCanonicalSkillTarget
+      ? getTargetFilePath(canonicalBasePath, canonicalTargetCfg, item)
+      : getTargetFilePath(basePath, targetCfg, item);
+    const primaryFormat = useCanonicalSkillTarget ? 'skill-md' : targetFormat;
+    const primaryResult = await executePlannedSyncWrite(
+      item,
+      primaryDest,
+      primaryFormat,
+      mode,
+      fallback,
+      dryRun
+    );
 
-    try {
-      sameLocation = await pathsResolveSameLocation(item.sourcePath, dest);
-      if (sameLocation) previewReason = 'same-realpath';
-    } catch {
-      previewReason = 'unknown-realpath';
+    previews.push(primaryResult.preview);
+    if (primaryResult.warning) {
+      console.log(primaryResult.warning);
     }
+    let finalStatus = primaryResult.status;
 
-    previews.push({
-      id: item.id,
-      format: `${item.sourceFormat} -> ${targetFormat}`,
-      action: sameLocation ? 'skipped' : plan.effectiveMode,
-      reason: previewReason,
-      to: dest
-    });
-
-    if (sameLocation) {
-      counters.skipped += 1;
-      continue;
-    }
-
-    if (dryRun) {
-      if (plan.effectiveMode === 'symlink') counters.symlinked += 1;
-      else if (plan.fallbackUsed) counters.fallbackCopied += 1;
-      else counters.copied += 1;
-      continue;
-    }
-
-    if (plan.fallbackUsed && plan.reason === 'conversion' && mode === 'symlink') {
-      console.log(`WARN: conversion required; copied ${item.id} -> ${dest} instead of symlink`);
-    }
-
-    if (plan.effectiveMode === 'symlink') {
-      try {
-        await createSymlink(dest, item.sourcePath);
-        counters.symlinked += 1;
-        continue;
-      } catch (error) {
-        if (plan.fallbackMode !== 'copy') {
-          counters.failed += 1;
-          console.log(`WARN: failed symlink for ${item.id} -> ${dest}: ${error.message}`);
-          continue;
+    if (useCanonicalSkillTarget && !isUniversalSkillTarget) {
+      const mirrorDest = getTargetFilePath(basePath, targetCfg, item);
+      if (primaryResult.status === 'failed') {
+        previews.push({
+          id: item.id,
+          format: `${item.sourceFormat} -> mirror`,
+          action: 'skipped',
+          reason: 'primary-failed',
+          to: mirrorDest
+        });
+      } else {
+        const mirrorResult = await executeMirrorSymlink(item, primaryDest, mirrorDest, dryRun);
+        previews.push(mirrorResult.preview);
+        if (mirrorResult.warning) {
+          console.log(mirrorResult.warning);
         }
-        try {
-          await writeFileAtomic(dest, payload.content);
-          counters.fallbackCopied += 1;
-          console.log(`WARN: symlink failed; fallback copied ${item.id} -> ${dest}`);
-          continue;
-        } catch (copyError) {
-          counters.failed += 1;
-          console.log(`WARN: fallback copy failed for ${item.id} -> ${dest}: ${copyError.message}`);
-          continue;
-        }
+        finalStatus = combineSyncStatuses(primaryResult.status, mirrorResult.status);
       }
     }
 
-    try {
-      await writeFileAtomic(dest, payload.content);
-      if (plan.fallbackUsed) counters.fallbackCopied += 1;
-      else counters.copied += 1;
-    } catch (error) {
-      counters.failed += 1;
-      console.log(`WARN: failed to write ${item.id} -> ${dest}: ${error.message}`);
-    }
+    incrementSyncCounter(counters, finalStatus);
   }
 
   if (dryRun) {
     console.log(
-      `Dry run: ${items.length - counters.skipped} file(s) would be synced to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+      `Dry run: ${items.length - counters.skipped} file(s) would be synced to ${targetKey} -> ${
+        useCanonicalSkillTarget ? canonicalBasePath : basePath
+      } (skipped=${counters.skipped})`
     );
     printTable(previews.slice(0, 20), [
       { label: 'ID', get: (row) => row.id, min: 12, max: 30 },
@@ -2868,7 +3159,9 @@ async function cmdSync(flags, context) {
 
   const successCount = counters.symlinked + counters.copied + counters.fallbackCopied;
   console.log(
-    `Synced ${successCount} skill file(s) to ${targetKey} -> ${basePath} (skipped=${counters.skipped})`
+    `Synced ${successCount} skill file(s) to ${targetKey} -> ${
+      useCanonicalSkillTarget ? canonicalBasePath : basePath
+    } (skipped=${counters.skipped})`
   );
   console.log(
     `Result: symlinked=${counters.symlinked} copied=${counters.copied} fallbackCopied=${counters.fallbackCopied} skipped=${counters.skipped} failed=${counters.failed}`
@@ -3212,5 +3505,6 @@ export {
   planSyncWriteMode,
   resolveSelectorMatches,
   resolveSyncTarget,
-  resolveTemplatePath
+  resolveTemplatePath,
+  pickPreferredCanonicalPath
 };

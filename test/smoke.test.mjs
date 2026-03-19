@@ -11,20 +11,26 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'bin', 'skillsdock.mjs');
 
-function runCli(args, cwd) {
+function runCli(args, cwd, envOverrides = {}) {
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...envOverrides
+    }
   });
   return result;
 }
 
 test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> cleanup plan -> sync dry-run -> doctor --agents', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-smoke-'));
+  const homeDir = path.join(base, 'home');
   const sourceDir = path.join(base, 'source-skills');
   const targetUserDir = path.join(base, 'target-user');
   const targetProjectDir = path.join(base, 'target-project');
 
+  await mkdir(homeDir, { recursive: true });
   await mkdir(path.join(sourceDir, 'demo'), { recursive: true });
   await writeFile(
     path.join(sourceDir, 'demo', 'SKILL.md'),
@@ -35,7 +41,9 @@ test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> clea
   const configPath = path.join(base, 'config.json');
   const registryPath = path.join(base, 'registry.json');
 
-  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base);
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const cfg = JSON.parse(await readFile(configPath, 'utf8'));
@@ -69,22 +77,32 @@ test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> clea
   };
   await writeFile(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
 
-  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base);
+  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  result = runCli(['all-local-skills', '--config', configPath, '--registry', registryPath, '--json'], base);
+  result = runCli(['all-local-skills', '--config', configPath, '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const allLocalPayload = JSON.parse(result.stdout);
   assert.equal(allLocalPayload.count > 0, true);
 
   const firstId = allLocalPayload.items[0].items[0].id;
-  result = runCli(['skill-detail', firstId, '--registry', registryPath, '--json'], base);
+  result = runCli(['skill-detail', firstId, '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  result = runCli(['tag', 'set', firstId, '--tag', 'frozen', '--registry', registryPath], base);
+  result = runCli(['tag', 'set', firstId, '--tag', 'frozen', '--registry', registryPath], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  result = runCli(['cleanup', '--plan', '--registry', registryPath], base);
+  result = runCli(['cleanup', '--plan', '--registry', registryPath], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   result = runCli(
@@ -100,12 +118,17 @@ test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> clea
       registryPath,
       '--dry-run'
     ],
-    base
+    base,
+    {
+      HOME: homeDir
+    }
   );
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Dry run:/);
 
-  result = runCli(['doctor', '--agents', '--config', configPath, '--registry', registryPath], base);
+  result = runCli(['doctor', '--agents', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Agent Matrix:/);
   assert.match(result.stdout, /Installed/);

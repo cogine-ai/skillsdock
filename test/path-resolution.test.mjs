@@ -5,6 +5,7 @@ import {
   AGENT_REGISTRY,
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
+  pickPreferredCanonicalPath,
   resolveTemplatePath
 } from '../bin/skillsdock-core.mjs';
 
@@ -88,4 +89,15 @@ test('buildDoctorAgentMatrixRows reports installed state from registry detection
   assert.equal(githubCopilotUser?.installed, 'yes');
   assert.equal(githubCopilotUser?.targetReady, 'no');
   assert.equal(openclawUser?.installed, 'no');
+});
+
+test('pickPreferredCanonicalPath prefers any path living under .agents/skills regardless of cwd', () => {
+  const canonicalPath = '/tmp/very-long-external-project/.agents/skills/demo/SKILL.md';
+  const nonCanonicalPath = '/tmp/a/.codex/skills/demo/SKILL.md';
+
+  const selected = pickPreferredCanonicalPath([nonCanonicalPath, canonicalPath], {
+    projectRoot: '/tmp/unrelated-project'
+  });
+
+  assert.equal(selected, canonicalPath);
 });
