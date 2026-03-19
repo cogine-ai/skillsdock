@@ -2844,25 +2844,45 @@ async function executePlannedSyncWrite(item, dest, targetFormat, mode, fallback,
   }
 }
 
-async function executeMirrorSymlink(sourcePath, destPath, dryRun) {
+async function executeMirrorSymlink(item, sourcePath, destPath, dryRun) {
   let sameLocation = false;
   try {
     sameLocation = await pathsResolveSameLocation(sourcePath, destPath);
   } catch {}
 
+  const preview = {
+    id: item.id,
+    format: `${item.sourceFormat} -> mirror`,
+    action: 'symlink',
+    reason: 'mirror',
+    to: destPath
+  };
+
   if (sameLocation) {
-    return { status: 'skipped' };
+    return {
+      status: 'skipped',
+      preview: {
+        ...preview,
+        action: 'skipped',
+        reason: 'same-realpath'
+      }
+    };
   }
   if (dryRun) {
-    return { status: 'symlinked' };
+    return { status: 'symlinked', preview };
   }
 
   try {
     await createSymlink(destPath, sourcePath);
-    return { status: 'symlinked' };
+    return { status: 'symlinked', preview };
   } catch (error) {
     return {
       status: 'failed',
+      preview: {
+        ...preview,
+        action: 'failed',
+        reason: 'mirror-failed'
+      },
       warning: `WARN: failed to mirror canonical symlink ${destPath} -> ${sourcePath}: ${error.message}`
     };
   }
@@ -3097,11 +3117,22 @@ async function cmdSync(flags, context) {
 
     if (useCanonicalSkillTarget && !isUniversalSkillTarget) {
       const mirrorDest = getTargetFilePath(basePath, targetCfg, item);
-      const mirrorResult = await executeMirrorSymlink(primaryDest, mirrorDest, dryRun);
-      if (mirrorResult.warning) {
-        console.log(mirrorResult.warning);
+      if (primaryResult.status === 'failed') {
+        previews.push({
+          id: item.id,
+          format: `${item.sourceFormat} -> mirror`,
+          action: 'skipped',
+          reason: 'primary-failed',
+          to: mirrorDest
+        });
+      } else {
+        const mirrorResult = await executeMirrorSymlink(item, primaryDest, mirrorDest, dryRun);
+        previews.push(mirrorResult.preview);
+        if (mirrorResult.warning) {
+          console.log(mirrorResult.warning);
+        }
+        finalStatus = combineSyncStatuses(primaryResult.status, mirrorResult.status);
       }
-      finalStatus = combineSyncStatuses(primaryResult.status, mirrorResult.status);
     }
 
     incrementSyncCounter(counters, finalStatus);

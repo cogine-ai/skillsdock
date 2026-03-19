@@ -215,6 +215,7 @@ test('dry-run sync counts a canonical-skip plus mirror symlink as a successful s
   );
   assert.equal(syncResult.status, 0, syncResult.stderr || syncResult.stdout);
   assert.match(syncResult.stdout, /Dry run: 1 file\(s\) would be synced .*skipped=0/);
+  assert.match(syncResult.stdout, /skill-md -> mirror/);
   assert.match(syncResult.stdout, /Result: symlinked=1 .* skipped=0 failed=0/);
 });
 
