@@ -264,3 +264,49 @@ test('sync counts mirror failures as failed outcomes for non-universal skill-md 
   assert.equal(syncResult.status, 1, syncResult.stderr || syncResult.stdout);
   assert.match(syncResult.stdout, /Result: symlinked=0 copied=0 fallbackCopied=0 skipped=0 failed=1/);
 });
+
+test('native path selectors still resolve to canonical records after realpath dedupe', async () => {
+  const baseDir = await mkdtemp(path.join(tmpdir(), 'skillsdock-canonical-selector-'));
+  const homeDir = path.join(baseDir, 'home');
+  const projectRoot = path.join(baseDir, 'project');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(projectRoot, { recursive: true });
+
+  const canonicalRoot = path.join(homeDir, '.agents', 'skills');
+  const nativeRoot = path.join(homeDir, '.claude', 'skills');
+  const { sourceFile } = await writeDemoSkill(canonicalRoot, 'demo');
+  const nativeDir = path.join(nativeRoot, 'demo');
+  const nativePath = path.join(nativeDir, 'SKILL.md');
+  await mkdir(nativeDir, { recursive: true });
+  await symlink(sourceFile, nativePath);
+
+  const { configPath, registryPath } = await initConfig(baseDir, projectRoot, homeDir);
+  const scanResult = runCli(['scan', '--config', configPath, '--registry', registryPath], projectRoot, {
+    HOME: homeDir
+  });
+  assert.equal(scanResult.status, 0, scanResult.stderr || scanResult.stdout);
+
+  const detailResult = runCli(['skill-detail', nativePath, '--registry', registryPath, '--json'], projectRoot, {
+    HOME: homeDir
+  });
+  assert.equal(detailResult.status, 0, detailResult.stderr || detailResult.stdout);
+  const detailPayload = JSON.parse(detailResult.stdout);
+  assert.equal(detailPayload.count, 1);
+  assert.equal(detailPayload.items[0].canonicalPath, path.join(canonicalRoot, 'demo', 'SKILL.md'));
+
+  const tagResult = runCli(
+    ['tag', 'set', nativePath, '--tag', 'deleted', '--registry', registryPath],
+    projectRoot,
+    {
+      HOME: homeDir
+    }
+  );
+  assert.equal(tagResult.status, 0, tagResult.stderr || tagResult.stdout);
+
+  const taggedDetail = runCli(['skill-detail', nativePath, '--registry', registryPath, '--json', '--all'], projectRoot, {
+    HOME: homeDir
+  });
+  assert.equal(taggedDetail.status, 0, taggedDetail.stderr || taggedDetail.stdout);
+  const taggedPayload = JSON.parse(taggedDetail.stdout);
+  assert.equal(taggedPayload.items[0].policy?.tag, 'deleted');
+});

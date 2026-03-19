@@ -1861,6 +1861,7 @@ async function cmdScan(flags, positionalArgs, context) {
       const legacyKeys = Array.from(
         new Set([
           ...(existing?.legacyKeys || []),
+          normalizedPath,
           pathKey !== realKey ? pathKey : null,
           ...sourceAliases.map((alias) => `${alias.name}:${normalizedPath}`)
         ].filter(Boolean))
@@ -2088,8 +2089,7 @@ function filterListItems(items, flags, registry) {
         continue;
       }
       const preferred = pickPreferredCanonicalPath(
-        [existing.canonicalPath, item.canonicalPath],
-        { projectRoot: detectProjectRoot(process.cwd()) }
+        [existing.canonicalPath, item.canonicalPath]
       );
       deduped.set(identityKey, preferred === item.canonicalPath ? item : existing);
     }
@@ -2237,8 +2237,7 @@ function aggregateAllLocalSkills(items) {
       continue;
     }
     const preferred = pickPreferredCanonicalPath(
-      [existing.canonicalPath, item.canonicalPath],
-      { projectRoot: detectProjectRoot(process.cwd()) }
+      [existing.canonicalPath, item.canonicalPath]
     );
     groupItems.set(identityKey, preferred === item.canonicalPath ? item : existing);
   }
