@@ -108,4 +108,6 @@ test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> clea
   result = runCli(['doctor', '--agents', '--config', configPath, '--registry', registryPath], base);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Agent Matrix:/);
+  assert.match(result.stdout, /Installed/);
+  assert.match(result.stdout, /Canonical/);
 });

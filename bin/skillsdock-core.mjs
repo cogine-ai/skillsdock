@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
 const APP_NAME = 'skillsdock';
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.2.0';
 
 const HOME = os.homedir();
 const APP_DIR = path.join(HOME, '.skillsdock');
@@ -984,6 +984,34 @@ function makeTargetEntry(agent, scope, targetConfig) {
   };
 }
 
+function getDetectInstalledPaths(scopeConfig) {
+  const detectInstalled = scopeConfig?.detectInstalled;
+  if (!detectInstalled || typeof detectInstalled !== 'object') return [];
+  if (!Array.isArray(detectInstalled.paths)) return [];
+  return detectInstalled.paths.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+function detectScopeInstalled(scopeConfig, options = {}) {
+  const projectRoot = options.projectRoot || detectProjectRoot(process.cwd());
+  const homeDir = options.homeDir || HOME;
+  const pathExistsFn = options.pathExists || fsSync.existsSync;
+  const detectInstalled = scopeConfig?.detectInstalled;
+  const detectPaths = getDetectInstalledPaths(scopeConfig);
+
+  if (detectPaths.length === 0) return 'n/a';
+
+  const resolvedPaths = detectPaths.map((entry) =>
+    resolveTemplatePath(entry, {
+      projectRoot,
+      homeDir
+    })
+  );
+
+  const mode = detectInstalled?.mode === 'all' ? 'all' : 'any';
+  const found = mode === 'all' ? resolvedPaths.every((entry) => pathExistsFn(entry)) : resolvedPaths.some((entry) => pathExistsFn(entry));
+  return found ? 'yes' : 'no';
+}
+
 function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
   const sources = [];
   const targets = {};
@@ -1396,7 +1424,7 @@ Examples:
 
 function padCell(value, width) {
   const text = String(value ?? '');
-  if (text.length >= width) return text.slice(0, Math.max(width - 1, 1)).concat('…');
+  if (text.length > width) return text.slice(0, Math.max(width - 1, 1)).concat('…');
   return text.padEnd(width, ' ');
 }
 
@@ -2719,8 +2747,11 @@ async function getNearestWritableAncestor(targetPath) {
   }
 }
 
-async function cmdDoctorAgents(config, context) {
+async function buildDoctorAgentMatrixRows(config, context, options = {}) {
   const projectRoot = context.projectRoot;
+  const homeDir = options.homeDir || HOME;
+  const pathExistsFn = options.pathExists || fsSync.existsSync;
+  const resolveWritable = options.resolveWritable || getNearestWritableAncestor;
   const sourceMap = new Map((config.sources || []).map((source) => [source.name, source]));
   const targetMap = new Map(Object.entries(config.targets || {}));
   const rows = [];
@@ -2737,8 +2768,8 @@ async function cmdDoctorAgents(config, context) {
         format: scopeConfig.source.format,
         optional: true
       };
-      const sourcePath = resolveTemplatePath(sourceCfg.path, { projectRoot });
-      const sourceExists = fsSync.existsSync(sourcePath);
+      const sourcePath = resolveTemplatePath(sourceCfg.path, { projectRoot, homeDir });
+      const sourceExists = pathExistsFn(sourcePath);
 
       const targetKey = `${agent.id}-${scope}`;
       const targetCfg = targetMap.get(targetKey) || {
@@ -2747,13 +2778,22 @@ async function cmdDoctorAgents(config, context) {
         format: scopeConfig.target.format,
         layout: scopeConfig.target.layout
       };
-      const targetPath = resolveTemplatePath(targetCfg.path, { projectRoot });
-      const writable = await getNearestWritableAncestor(path.dirname(targetPath));
+      const targetPath = resolveTemplatePath(targetCfg.path, { projectRoot, homeDir });
+      const writable = await resolveWritable(path.dirname(targetPath));
 
       rows.push({
         agent: agent.id,
+        displayName: agent.displayName || agent.id,
+        referenceId: agent.referenceId || agent.id,
         scope,
+        installFamily: agent.installFamily || 'dedicated',
+        canonicalDir: agent.canonicalDir || '',
         format: `${sourceCfg.format} -> ${targetCfg.format}`,
+        installed: detectScopeInstalled(scopeConfig, {
+          projectRoot,
+          homeDir,
+          pathExists: pathExistsFn
+        }),
         sourceExists: sourceExists ? 'yes' : 'no',
         targetReady: writable.ready ? 'yes' : 'no',
         sourcePath,
@@ -2762,15 +2802,24 @@ async function cmdDoctorAgents(config, context) {
     }
   }
 
+  return rows;
+}
+
+async function cmdDoctorAgents(config, context) {
+  const rows = await buildDoctorAgentMatrixRows(config, context);
+
   console.log('\nAgent Matrix:');
   printTable(rows, [
     { label: 'Agent', get: (row) => row.agent, min: 8, max: 12 },
     { label: 'Scope', get: (row) => row.scope, min: 7, max: 7 },
+    { label: 'Family', get: (row) => row.installFamily, min: 9, max: 10 },
+    { label: 'Canonical', get: (row) => row.canonicalDir, min: 12, max: 20 },
     { label: 'Format', get: (row) => row.format, min: 18, max: 24 },
+    { label: 'Installed', get: (row) => row.installed, min: 9, max: 11 },
     { label: 'Source', get: (row) => row.sourceExists, min: 6, max: 6 },
     { label: 'Target', get: (row) => row.targetReady, min: 6, max: 6 },
-    { label: 'Source Path', get: (row) => row.sourcePath, min: 20, max: 55 },
-    { label: 'Target Path', get: (row) => row.targetPath, min: 20, max: 55 }
+    { label: 'Source Path', get: (row) => row.sourcePath, min: 20, max: 40 },
+    { label: 'Target Path', get: (row) => row.targetPath, min: 20, max: 40 }
   ]);
 }
 
@@ -2983,6 +3032,7 @@ export {
   AGENT_REGISTRY,
   APP_VERSION,
   buildDefaultConfig,
+  buildDoctorAgentMatrixRows,
   buildCleanupPlan,
   convertContentToFormat,
   detectProjectRoot,

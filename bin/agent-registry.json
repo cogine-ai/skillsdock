@@ -1,120 +1,806 @@
 {
   "meta": {
-    "version": 1,
-    "referenceSource": "Pattern-seeded from public multi-agent conventions (including vercel-labs/skills) and curated for SkillsDock.",
-    "referenceDate": "2026-02-24",
+    "version": 2,
+    "referenceSource": "Pattern-seeded from public agent-skills conventions (including vercel-labs/skills) and curated for SkillsDock.",
+    "referenceDate": "2026-03-19",
     "note": "This registry is a local curated snapshot. SkillsDock does not fetch agent paths from network at runtime."
   },
   "agents": [
     {
       "id": "openclaw",
+      "referenceId": "openclaw",
       "displayName": "OpenClaw",
+      "installFamily": "dedicated",
+      "canonicalDir": "skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.openclaw/skills", "format": "openclaw-md", "optional": true },
-          "target": { "path": "~/.openclaw/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" }
+          "target": { "path": "~/.openclaw/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.openclaw", "~/.clawdbot", "~/.moltbot"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/skills", "format": "openclaw-md", "optional": true },
-          "target": { "path": "${projectRoot}/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" }
+          "target": { "path": "${projectRoot}/skills", "format": "openclaw-md", "layout": "flat", "extension": ".md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/skills"] }
         }
       }
     },
     {
       "id": "codex",
+      "referenceId": "codex",
       "displayName": "Codex",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.codex/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "~/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "~/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.codex", "/etc/codex"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.codex/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "${projectRoot}/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "${projectRoot}/.codex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.codex"] }
         }
       }
     },
     {
       "id": "claude",
+      "referenceId": "claude-code",
       "displayName": "Claude",
+      "installFamily": "dedicated",
+      "canonicalDir": ".claude/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.claude/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "~/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "~/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.claude"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.claude/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "${projectRoot}/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "${projectRoot}/.claude/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.claude"] }
         }
       }
     },
     {
       "id": "cursor",
+      "referenceId": "cursor",
       "displayName": "Cursor",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.cursor/rules", "format": "mdc", "optional": true },
-          "target": { "path": "~/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+          "target": { "path": "~/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.cursor"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.cursor/rules", "format": "mdc", "optional": true },
-          "target": { "path": "${projectRoot}/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+          "target": { "path": "${projectRoot}/.cursor/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.cursor"] }
         }
       }
     },
     {
       "id": "cline",
+      "referenceId": "cline",
       "displayName": "Cline",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.cline/rules", "format": "mdc", "optional": true },
-          "target": { "path": "~/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+          "target": { "path": "~/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.cline"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.cline/rules", "format": "mdc", "optional": true },
-          "target": { "path": "${projectRoot}/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" }
+          "target": { "path": "${projectRoot}/.cline/rules", "format": "mdc", "layout": "flat", "extension": ".mdc" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.cline"] }
         }
       }
     },
     {
       "id": "codebuddy",
+      "referenceId": "codebuddy",
       "displayName": "CodeBuddy",
+      "installFamily": "dedicated",
+      "canonicalDir": ".codebuddy/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.codebuddy/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "~/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "~/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.codebuddy"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.codebuddy/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "${projectRoot}/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "${projectRoot}/.codebuddy/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.codebuddy"] }
         }
       }
     },
     {
       "id": "trae",
+      "referenceId": "trae",
       "displayName": "Trae",
+      "installFamily": "dedicated",
+      "canonicalDir": ".trae/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.trae/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "~/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "~/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.trae"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.trae/skills", "format": "skill-md", "optional": true },
-          "target": { "path": "${projectRoot}/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" }
+          "target": { "path": "${projectRoot}/.trae/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.trae"] }
         }
       }
     },
     {
       "id": "opencode",
+      "referenceId": "opencode",
       "displayName": "OpenCode",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
       "scopes": {
         "user": {
           "source": { "path": "~/.opencode/skills", "format": "opencode-md", "optional": true },
-          "target": { "path": "~/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" }
+          "target": { "path": "~/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.config/opencode", "~/.opencode"] }
         },
         "project": {
           "source": { "path": "${projectRoot}/.opencode/skills", "format": "opencode-md", "optional": true },
-          "target": { "path": "${projectRoot}/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" }
+          "target": { "path": "${projectRoot}/.opencode/skills", "format": "opencode-md", "layout": "flat", "extension": ".md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.opencode"] }
+        }
+      }
+    },
+    {
+      "id": "amp",
+      "referenceId": "amp",
+      "displayName": "Amp",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.config/agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.config/agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.config/amp"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.amp"] }
+        }
+      }
+    },
+    {
+      "id": "antigravity",
+      "referenceId": "antigravity",
+      "displayName": "Antigravity",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.gemini/antigravity/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.gemini/antigravity/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.gemini/antigravity"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.gemini/antigravity"] }
+        }
+      }
+    },
+    {
+      "id": "augment",
+      "referenceId": "augment",
+      "displayName": "Augment",
+      "installFamily": "dedicated",
+      "canonicalDir": ".augment/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.augment/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.augment/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.augment"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.augment/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.augment/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.augment"] }
+        }
+      }
+    },
+    {
+      "id": "command-code",
+      "referenceId": "command-code",
+      "displayName": "Command Code",
+      "installFamily": "dedicated",
+      "canonicalDir": ".commandcode/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.commandcode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.commandcode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.commandcode"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.commandcode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.commandcode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.commandcode"] }
+        }
+      }
+    },
+    {
+      "id": "continue",
+      "referenceId": "continue",
+      "displayName": "Continue",
+      "installFamily": "dedicated",
+      "canonicalDir": ".continue/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.continue/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.continue/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.continue"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.continue/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.continue/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.continue"] }
+        }
+      }
+    },
+    {
+      "id": "cortex",
+      "referenceId": "cortex",
+      "displayName": "Cortex Code",
+      "installFamily": "dedicated",
+      "canonicalDir": ".cortex/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.snowflake/cortex/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.snowflake/cortex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.snowflake/cortex"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.cortex/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.cortex/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.cortex"] }
+        }
+      }
+    },
+    {
+      "id": "crush",
+      "referenceId": "crush",
+      "displayName": "Crush",
+      "installFamily": "dedicated",
+      "canonicalDir": ".crush/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.config/crush/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.config/crush/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.config/crush"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.crush/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.crush/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.crush"] }
+        }
+      }
+    },
+    {
+      "id": "deepagents",
+      "referenceId": "deepagents",
+      "displayName": "Deep Agents",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.deepagents/agent/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.deepagents/agent/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.deepagents"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.deepagents"] }
+        }
+      }
+    },
+    {
+      "id": "droid",
+      "referenceId": "droid",
+      "displayName": "Droid",
+      "installFamily": "dedicated",
+      "canonicalDir": ".factory/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.factory/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.factory/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.factory"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.factory/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.factory/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.factory"] }
+        }
+      }
+    },
+    {
+      "id": "gemini-cli",
+      "referenceId": "gemini-cli",
+      "displayName": "Gemini CLI",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.gemini/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.gemini/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.gemini"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.gemini"] }
+        }
+      }
+    },
+    {
+      "id": "github-copilot",
+      "referenceId": "github-copilot",
+      "displayName": "GitHub Copilot",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.copilot/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.copilot/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.copilot"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.copilot"] }
+        }
+      }
+    },
+    {
+      "id": "goose",
+      "referenceId": "goose",
+      "displayName": "Goose",
+      "installFamily": "dedicated",
+      "canonicalDir": ".goose/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.config/goose/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.config/goose/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.config/goose"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.goose/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.goose/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.goose"] }
+        }
+      }
+    },
+    {
+      "id": "junie",
+      "referenceId": "junie",
+      "displayName": "Junie",
+      "installFamily": "dedicated",
+      "canonicalDir": ".junie/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.junie/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.junie/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.junie"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.junie/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.junie/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.junie"] }
+        }
+      }
+    },
+    {
+      "id": "iflow-cli",
+      "referenceId": "iflow-cli",
+      "displayName": "iFlow CLI",
+      "installFamily": "dedicated",
+      "canonicalDir": ".iflow/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.iflow/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.iflow/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.iflow"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.iflow/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.iflow/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.iflow"] }
+        }
+      }
+    },
+    {
+      "id": "kilo",
+      "referenceId": "kilo",
+      "displayName": "Kilo Code",
+      "installFamily": "dedicated",
+      "canonicalDir": ".kilocode/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.kilocode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.kilocode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.kilocode"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.kilocode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.kilocode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.kilocode"] }
+        }
+      }
+    },
+    {
+      "id": "kimi-cli",
+      "referenceId": "kimi-cli",
+      "displayName": "Kimi Code CLI",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.config/agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.config/agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.kimi"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.kimi"] }
+        }
+      }
+    },
+    {
+      "id": "kiro-cli",
+      "referenceId": "kiro-cli",
+      "displayName": "Kiro CLI",
+      "installFamily": "dedicated",
+      "canonicalDir": ".kiro/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.kiro/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.kiro/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.kiro"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.kiro/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.kiro/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.kiro"] }
+        }
+      }
+    },
+    {
+      "id": "kode",
+      "referenceId": "kode",
+      "displayName": "Kode",
+      "installFamily": "dedicated",
+      "canonicalDir": ".kode/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.kode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.kode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.kode"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.kode/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.kode/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.kode"] }
+        }
+      }
+    },
+    {
+      "id": "mcpjam",
+      "referenceId": "mcpjam",
+      "displayName": "MCPJam",
+      "installFamily": "dedicated",
+      "canonicalDir": ".mcpjam/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.mcpjam/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.mcpjam/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.mcpjam"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.mcpjam/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.mcpjam/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.mcpjam"] }
+        }
+      }
+    },
+    {
+      "id": "mistral-vibe",
+      "referenceId": "mistral-vibe",
+      "displayName": "Mistral Vibe",
+      "installFamily": "dedicated",
+      "canonicalDir": ".vibe/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.vibe/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.vibe/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.vibe"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.vibe/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.vibe/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.vibe"] }
+        }
+      }
+    },
+    {
+      "id": "mux",
+      "referenceId": "mux",
+      "displayName": "Mux",
+      "installFamily": "dedicated",
+      "canonicalDir": ".mux/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.mux/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.mux/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.mux"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.mux/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.mux/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.mux"] }
+        }
+      }
+    },
+    {
+      "id": "neovate",
+      "referenceId": "neovate",
+      "displayName": "Neovate",
+      "installFamily": "dedicated",
+      "canonicalDir": ".neovate/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.neovate/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.neovate/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.neovate"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.neovate/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.neovate/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.neovate"] }
+        }
+      }
+    },
+    {
+      "id": "openhands",
+      "referenceId": "openhands",
+      "displayName": "OpenHands",
+      "installFamily": "dedicated",
+      "canonicalDir": ".openhands/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.openhands/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.openhands/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.openhands"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.openhands/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.openhands/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.openhands"] }
+        }
+      }
+    },
+    {
+      "id": "pi",
+      "referenceId": "pi",
+      "displayName": "Pi",
+      "installFamily": "dedicated",
+      "canonicalDir": ".pi/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.pi/agent/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.pi/agent/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.pi/agent"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.pi/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.pi/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.pi"] }
+        }
+      }
+    },
+    {
+      "id": "qoder",
+      "referenceId": "qoder",
+      "displayName": "Qoder",
+      "installFamily": "dedicated",
+      "canonicalDir": ".qoder/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.qoder/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.qoder/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.qoder"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.qoder/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.qoder/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.qoder"] }
+        }
+      }
+    },
+    {
+      "id": "qwen-code",
+      "referenceId": "qwen-code",
+      "displayName": "Qwen Code",
+      "installFamily": "dedicated",
+      "canonicalDir": ".qwen/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.qwen/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.qwen/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.qwen"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.qwen/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.qwen/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.qwen"] }
+        }
+      }
+    },
+    {
+      "id": "replit",
+      "referenceId": "replit",
+      "displayName": "Replit",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.config/agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.config/agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.config/replit", "~/.replit"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.replit"] }
+        }
+      }
+    },
+    {
+      "id": "roo",
+      "referenceId": "roo",
+      "displayName": "Roo Code",
+      "installFamily": "dedicated",
+      "canonicalDir": ".roo/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.roo/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.roo/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.roo"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.roo/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.roo/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.roo"] }
+        }
+      }
+    },
+    {
+      "id": "trae-cn",
+      "referenceId": "trae-cn",
+      "displayName": "Trae CN",
+      "installFamily": "dedicated",
+      "canonicalDir": ".trae-cn/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.trae-cn/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.trae-cn/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.trae-cn"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.trae-cn/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.trae-cn/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.trae-cn"] }
+        }
+      }
+    },
+    {
+      "id": "warp",
+      "referenceId": "warp",
+      "displayName": "Warp",
+      "installFamily": "universal",
+      "canonicalDir": ".agents/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.warp"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.agents/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.warp"] }
+        }
+      }
+    },
+    {
+      "id": "windsurf",
+      "referenceId": "windsurf",
+      "displayName": "Windsurf",
+      "installFamily": "dedicated",
+      "canonicalDir": ".windsurf/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.codeium/windsurf/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.codeium/windsurf/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.codeium/windsurf"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.windsurf/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.windsurf/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.windsurf"] }
+        }
+      }
+    },
+    {
+      "id": "zencoder",
+      "referenceId": "zencoder",
+      "displayName": "Zencoder",
+      "installFamily": "dedicated",
+      "canonicalDir": ".zencoder/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.zencoder/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.zencoder/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.zencoder"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.zencoder/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.zencoder/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.zencoder"] }
+        }
+      }
+    },
+    {
+      "id": "pochi",
+      "referenceId": "pochi",
+      "displayName": "Pochi",
+      "installFamily": "dedicated",
+      "canonicalDir": ".pochi/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.pochi/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.pochi/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.pochi"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.pochi/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.pochi/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.pochi"] }
+        }
+      }
+    },
+    {
+      "id": "adal",
+      "referenceId": "adal",
+      "displayName": "AdaL",
+      "installFamily": "dedicated",
+      "canonicalDir": ".adal/skills",
+      "scopes": {
+        "user": {
+          "source": { "path": "~/.adal/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "~/.adal/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["~/.adal"] }
+        },
+        "project": {
+          "source": { "path": "${projectRoot}/.adal/skills", "format": "skill-md", "optional": true },
+          "target": { "path": "${projectRoot}/.adal/skills", "format": "skill-md", "layout": "nested", "filename": "SKILL.md" },
+          "detectInstalled": { "mode": "any", "paths": ["${projectRoot}/.adal"] }
         }
       }
     }
