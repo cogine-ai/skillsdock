@@ -185,6 +185,46 @@ test('governance commands: all-local-skills, tag, cleanup, rollback, sync gating
   assert.equal(tagsAfterRollback.items.some((item) => item.policy?.tag === 'disabled'), false);
 });
 
+test('scan preserves shared-source aliases for filtering and detail output', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-shared-source-'));
+  const sharedSource = path.join(base, 'shared-source');
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+
+  await mkdir(path.join(sharedSource, 'shared-skill'), { recursive: true });
+  await writeFile(
+    path.join(sharedSource, 'shared-skill', 'SKILL.md'),
+    `---\nname: shared-skill\ndescription: Shared skill\n---\n\n# Shared`,
+    'utf8'
+  );
+
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['scan', sharedSource, sharedSource, '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Found files: 1/);
+
+  result = runCli(['all-local-skills', '--registry', registryPath, '--source', 'arg-1', '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  let payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+
+  result = runCli(['all-local-skills', '--registry', registryPath, '--source', 'arg-2', '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+
+  result = runCli(['skill-detail', 'shared-skill', '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const detail = JSON.parse(result.stdout);
+  assert.equal(detail.count, 1);
+  assert.deepEqual(
+    detail.items[0].sourceAliases.map((entry) => entry.name).sort((a, b) => a.localeCompare(b)),
+    ['arg-1', 'arg-2']
+  );
+});
+
 test('scan enforces skill-md frontmatter and skips internal skills by default', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-parse-align-'));
   const sourceDir = path.join(base, 'source');

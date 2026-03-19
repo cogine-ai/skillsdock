@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
 const APP_NAME = 'skillsdock';
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.2.0';
 
 const HOME = os.homedir();
 const APP_DIR = path.join(HOME, '.skillsdock');
@@ -984,8 +984,39 @@ function makeTargetEntry(agent, scope, targetConfig) {
   };
 }
 
+function getDetectInstalledPaths(scopeConfig) {
+  const detectInstalled = scopeConfig?.detectInstalled;
+  if (!detectInstalled || typeof detectInstalled !== 'object') return [];
+  if (!Array.isArray(detectInstalled.paths)) return [];
+  return detectInstalled.paths.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+async function detectScopeInstalled(scopeConfig, options = {}) {
+  const projectRoot = options.projectRoot || detectProjectRoot(process.cwd());
+  const homeDir = options.homeDir || HOME;
+  const pathExistsFn = options.pathExists || fsSync.existsSync;
+  const detectInstalled = scopeConfig?.detectInstalled;
+  const detectPaths = getDetectInstalledPaths(scopeConfig);
+
+  if (detectPaths.length === 0) return 'n/a';
+
+  const resolvedPaths = detectPaths.map((entry) =>
+    resolveTemplatePath(entry, {
+      projectRoot,
+      homeDir
+    })
+  );
+
+  const mode = detectInstalled?.mode === 'all' ? 'all' : 'any';
+  const resolvedResults = await Promise.all(
+    resolvedPaths.map((entry) => Promise.resolve(pathExistsFn(entry)).then(Boolean))
+  );
+  const found = mode === 'all' ? resolvedResults.every(Boolean) : resolvedResults.some(Boolean);
+  return found ? 'yes' : 'no';
+}
+
 function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
-  const sources = [];
+  const sourceGroups = new Map();
   const targets = {};
 
   for (const agent of AGENT_REGISTRY.agents) {
@@ -995,8 +1026,29 @@ function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
 
       const source = makeSourceEntry(agent, scope, scopeConfig.source);
       const target = makeTargetEntry(agent, scope, scopeConfig.target);
-
-      sources.push(source);
+      const sourceGroupKey = `${source.path}::${source.format}`;
+      const existingSource = sourceGroups.get(sourceGroupKey);
+      if (existingSource) {
+        existingSource.sourceAliases = uniqueSourceAliases([
+          ...(existingSource.sourceAliases || []),
+          {
+            name: source.name,
+            agent: source.agent,
+            scope: source.scope
+          }
+        ]);
+      } else {
+        sourceGroups.set(sourceGroupKey, {
+          ...source,
+          sourceAliases: uniqueSourceAliases([
+            {
+              name: source.name,
+              agent: source.agent,
+              scope: source.scope
+            }
+          ])
+        });
+      }
       targets[target.name] = target;
     }
   }
@@ -1006,7 +1058,7 @@ function buildDefaultConfig(projectRoot = detectProjectRoot(process.cwd())) {
     meta: {
       projectRoot
     },
-    sources,
+    sources: Array.from(sourceGroups.values()),
     targets,
     scan: {
       maxDepth: DEFAULT_SCAN.maxDepth,
@@ -1195,6 +1247,70 @@ function mergeNonEmptyStrings(primary, fallback) {
   return String(fallback || '');
 }
 
+function normalizeSourceAlias(input) {
+  if (!input || typeof input !== 'object') return null;
+  const name = String(input.name || '').trim();
+  if (!name) return null;
+  const agent = String(input.agent || '').trim() || null;
+  const scope = VALID_SCOPE_SET.has(input.scope) ? input.scope : null;
+  return { name, agent, scope };
+}
+
+function uniqueSourceAliases(entries = []) {
+  const aliases = [];
+  const seen = new Set();
+
+  for (const entry of entries) {
+    const alias = normalizeSourceAlias(entry);
+    if (!alias) continue;
+    const key = `${alias.name}::${alias.agent || ''}::${alias.scope || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    aliases.push(alias);
+  }
+
+  return aliases;
+}
+
+function getItemSourceAliases(item) {
+  if (!item || typeof item !== 'object') return [];
+  const aliases = Array.isArray(item.sourceAliases) ? uniqueSourceAliases(item.sourceAliases) : [];
+  if (aliases.length > 0) return aliases;
+  return uniqueSourceAliases([
+    {
+      name: item.sourceName,
+      agent: item.sourceAgent,
+      scope: item.sourceScope
+    }
+  ]);
+}
+
+function getPrimarySourceAlias(item, fallback = null) {
+  const aliases = getItemSourceAliases(item);
+  if (aliases.length > 0) return aliases[0];
+  return normalizeSourceAlias(fallback);
+}
+
+function setItemSourceAliases(item, aliases, fallback = null) {
+  const normalizedAliases = uniqueSourceAliases(aliases);
+  const primaryAlias = normalizedAliases[0] || normalizeSourceAlias(fallback);
+  return {
+    ...item,
+    sourceAliases: normalizedAliases,
+    sourceName: primaryAlias?.name || null,
+    sourceAgent: primaryAlias?.agent || null,
+    sourceScope: primaryAlias?.scope || null
+  };
+}
+
+function itemMatchesSourceName(item, sourceName) {
+  return getItemSourceAliases(item).some((alias) => alias.name === sourceName);
+}
+
+function itemMatchesSourceScope(item, sourceScope) {
+  return getItemSourceAliases(item).some((alias) => alias.scope === sourceScope);
+}
+
 function mergeRegistryItems(existing, incoming) {
   if (!existing) return incoming;
   const existingTs = Math.max(
@@ -1217,6 +1333,7 @@ function mergeRegistryItems(existing, incoming) {
   };
 
   merged.legacyKeys = Array.from(new Set([...(existing.legacyKeys || []), ...(incoming.legacyKeys || [])]));
+  const mergedAliases = uniqueSourceAliases([...getItemSourceAliases(existing), ...getItemSourceAliases(incoming)]);
   merged.policy = normalizePolicy(
     {
       ...(older.policy || {}),
@@ -1245,7 +1362,11 @@ function mergeRegistryItems(existing, incoming) {
   merged.lastSeenAt = normalizeIsoOrNull(latest.lastSeenAt) || normalizeIsoOrNull(older.lastSeenAt);
   merged.changedAt = normalizeIsoOrNull(latest.changedAt) || normalizeIsoOrNull(older.changedAt);
   merged.state = latest.state || older.state || 'active';
-  return merged;
+  return setItemSourceAliases(merged, mergedAliases, {
+    name: mergeNonEmptyStrings(latest.sourceName, older.sourceName),
+    agent: mergeNonEmptyStrings(latest.sourceAgent, older.sourceAgent) || null,
+    scope: VALID_SCOPE_SET.has(latest.sourceScope) ? latest.sourceScope : older.sourceScope
+  });
 }
 
 function normalizeCleanupHistory(input) {
@@ -1307,6 +1428,14 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     body: String(item.normalized?.body || item.body || '')
   };
   const manifestHash = String(item.manifestHash || hash);
+  const sourceAliases = uniqueSourceAliases([
+    ...getItemSourceAliases(item),
+    {
+      name: item.sourceName,
+      agent: item.sourceAgent,
+      scope: item.sourceScope
+    }
+  ]);
   const legacyKeys = Array.from(
     new Set(
       [legacyKey, ...(Array.isArray(item.legacyKeys) ? item.legacyKeys : [])].filter(
@@ -1315,7 +1444,7 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     )
   );
 
-  return {
+  return setItemSourceAliases({
     ...item,
     key,
     canonicalPath,
@@ -1336,7 +1465,11 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     firstSeenAt: normalizeIsoOrNull(item.firstSeenAt),
     lastSeenAt: normalizeIsoOrNull(item.lastSeenAt),
     changedAt: normalizeIsoOrNull(item.changedAt)
-  };
+  }, sourceAliases, {
+    name: item.sourceName,
+    agent: item.sourceAgent,
+    scope: item.sourceScope
+  });
 }
 
 function normalizeRegistry(input) {
@@ -1396,7 +1529,7 @@ Examples:
 
 function padCell(value, width) {
   const text = String(value ?? '');
-  if (text.length >= width) return text.slice(0, Math.max(width - 1, 1)).concat('…');
+  if (text.length > width) return text.slice(0, Math.max(width - 1, 1)).concat('…');
   return text.padEnd(width, ' ');
 }
 
@@ -1534,15 +1667,9 @@ async function cmdScan(flags, positionalArgs, context) {
     throw new Error('No scan sources configured. Run "skillsdock init" and update config.');
   }
 
-  const seenCanonicalPaths = new Set();
-  const sourceNames = [];
-  const includeInternal = shouldInstallInternalSkills();
-  let discovered = 0;
-  let created = 0;
-  let updated = 0;
-  let unchanged = 0;
-  let parseErrors = 0;
-  let skippedInternal = 0;
+  const normalizedSourceInputs = [];
+  const scannedSourceNames = [];
+  const sourceGroupIndex = new Map();
 
   for (const sourceRaw of sourceInputs) {
     const sourceName = sourceRaw.name || slugify(sourceRaw.path || 'source');
@@ -1551,16 +1678,54 @@ async function cmdScan(flags, positionalArgs, context) {
 
     const sourcePath = resolveTemplatePath(sourcePathInput, { projectRoot });
     const sourceFormat = normalizeSourceFormat(sourceRaw.format, sourcePathInput);
+    const sourceAliases = uniqueSourceAliases([
+      ...(Array.isArray(sourceRaw.sourceAliases) ? sourceRaw.sourceAliases : []),
+      {
+        name: sourceName,
+        agent: sourceRaw.agent || null,
+        scope: sourceRaw.scope || null
+      }
+    ]);
     const source = {
       ...sourceRaw,
       name: sourceName,
       agent: sourceRaw.agent || null,
       scope: sourceRaw.scope || null,
-      format: sourceFormat
+      format: sourceFormat,
+      sourceAliases
     };
+    for (const alias of sourceAliases) {
+      scannedSourceNames.push(alias.name);
+    }
 
-    sourceNames.push(sourceName);
+    const sourceGroupKey = `${normalizePath(sourcePath)}::${sourceFormat}`;
+    const existingIndex = sourceGroupIndex.get(sourceGroupKey);
+    if (existingIndex !== undefined) {
+      const existingGroup = normalizedSourceInputs[existingIndex];
+      existingGroup.sourceAliases = uniqueSourceAliases([...(existingGroup.sourceAliases || []), ...sourceAliases]);
+      continue;
+    }
 
+    sourceGroupIndex.set(sourceGroupKey, normalizedSourceInputs.length);
+    normalizedSourceInputs.push({
+      ...source,
+      sourcePath,
+      sourceAliases
+    });
+  }
+
+  const seenCanonicalPaths = new Set();
+  const includeInternal = shouldInstallInternalSkills();
+  let discovered = 0;
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let parseErrors = 0;
+  let skippedInternal = 0;
+
+  for (const source of normalizedSourceInputs) {
+    const sourceFormat = source.format;
+    const sourcePath = source.sourcePath;
     const skillFiles = await collectSkillFiles(
       sourcePath,
       sourceFormat,
@@ -1573,24 +1738,25 @@ async function cmdScan(flags, positionalArgs, context) {
       const canonicalPath = normalizePath(filePath);
       seenCanonicalPaths.add(canonicalPath);
       const canonicalKey = makeCanonicalKey(canonicalPath);
-      const legacyKey = `${sourceName}:${canonicalPath}`;
       const existing = registry.items[canonicalKey];
+      const sourceAliases = uniqueSourceAliases([...(source.sourceAliases || []), ...getItemSourceAliases(existing)]);
+      const primaryAlias = sourceAliases[0] || normalizeSourceAlias(source);
+      const legacyKeys = Array.from(
+        new Set([...(existing?.legacyKeys || []), ...sourceAliases.map((alias) => `${alias.name}:${canonicalPath}`)])
+      );
 
       if (existing && isFrozen(existing)) {
-        registry.items[canonicalKey] = {
+        registry.items[canonicalKey] = setItemSourceAliases({
           ...existing,
           key: canonicalKey,
           canonicalPath,
           sourcePath: canonicalPath,
-          sourceName,
-          sourceAgent: source.agent || existing.sourceAgent || null,
-          sourceScope: source.scope || existing.sourceScope || null,
           sourceFormat: existing.sourceFormat || sourceFormat,
-          legacyKeys: Array.from(new Set([...(existing.legacyKeys || []), legacyKey])),
+          legacyKeys: Array.from(new Set(legacyKeys)),
           state: 'active',
           firstSeenAt: existing.firstSeenAt || now,
           lastSeenAt: now
-        };
+        }, sourceAliases, primaryAlias);
         unchanged += 1;
         continue;
       }
@@ -1615,26 +1781,26 @@ async function cmdScan(flags, positionalArgs, context) {
       else if (changed) updated += 1;
       else unchanged += 1;
 
-      registry.items[canonicalKey] = {
+      registry.items[canonicalKey] = setItemSourceAliases({
         ...existing,
         ...parsed,
         key: canonicalKey,
         canonicalPath,
         sourcePath: canonicalPath,
-        legacyKeys: Array.from(new Set([...(existing?.legacyKeys || []), legacyKey])),
+        legacyKeys: Array.from(new Set(legacyKeys)),
         policy: normalizePolicy(existing?.policy, existing?.policy?.updatedAt || now),
         state: 'active',
         firstSeenAt: existing?.firstSeenAt || now,
         lastSeenAt: now,
         changedAt: changed ? now : existing?.changedAt || existing?.firstSeenAt || now
-      };
+      }, sourceAliases, primaryAlias);
     }
   }
 
   let missing = 0;
-  const scannedSourceSet = new Set(sourceNames);
+  const scannedSourceSet = new Set(scannedSourceNames);
   for (const [key, item] of Object.entries(registry.items || {})) {
-    if (!scannedSourceSet.has(item.sourceName)) continue;
+    if (![...scannedSourceSet].some((sourceName) => itemMatchesSourceName(item, sourceName))) continue;
     if (seenCanonicalPaths.has(item.canonicalPath)) continue;
     if (item.state !== 'missing') missing += 1;
     registry.items[key] = {
@@ -1643,7 +1809,7 @@ async function cmdScan(flags, positionalArgs, context) {
     };
   }
 
-  const sourceOrder = new Map(sourceNames.map((name, index) => [name, index]));
+  const sourceOrder = new Map(scannedSourceNames.map((name, index) => [name, index]));
   const byId = new Map();
   for (const item of Object.values(registry.items || {})) {
     if (item.state !== 'active') continue;
@@ -1653,7 +1819,9 @@ async function cmdScan(flags, positionalArgs, context) {
   }
   for (const items of byId.values()) {
     items.sort((a, b) => {
-      const sourceDiff = (sourceOrder.get(a.sourceName) ?? 9999) - (sourceOrder.get(b.sourceName) ?? 9999);
+      const aAlias = getPrimarySourceAlias(a);
+      const bAlias = getPrimarySourceAlias(b);
+      const sourceDiff = (sourceOrder.get(aAlias?.name) ?? 9999) - (sourceOrder.get(bAlias?.name) ?? 9999);
       if (sourceDiff !== 0) return sourceDiff;
       return a.sourcePath.localeCompare(b.sourcePath);
     });
@@ -1671,7 +1839,7 @@ async function cmdScan(flags, positionalArgs, context) {
   rebuildRegistryIndexes(registry);
   await writeJson(registryPath, registry);
 
-  console.log(`Scanned ${sourceNames.length} source(s)`);
+  console.log(`Scanned ${normalizedSourceInputs.length} source(s)`);
   console.log(`Found files: ${discovered}`);
   console.log(`New: ${created} | Updated: ${updated} | Unchanged: ${unchanged} | Missing: ${missing}`);
   if (skippedInternal > 0) {
@@ -1742,11 +1910,11 @@ function filterBySharedFlags(items, flags = {}) {
   let list = [...items];
 
   if (flags.source) {
-    list = list.filter((item) => item.sourceName === flags.source);
+    list = list.filter((item) => itemMatchesSourceName(item, String(flags.source)));
   }
 
   if (flags.scope) {
-    list = list.filter((item) => item.sourceScope === flags.scope);
+    list = list.filter((item) => itemMatchesSourceScope(item, String(flags.scope)));
   }
 
   if (flags.tag) {
@@ -1886,16 +2054,28 @@ async function cmdInspect(flags, positionalArgs) {
   }
 }
 
-function deriveAgentName(item) {
-  if (item.sourceAgent) return item.sourceAgent;
-  if (typeof item.sourceName === 'string' && item.sourceName.includes('-')) {
-    return item.sourceName.split('-')[0];
+function deriveAgentNames(item) {
+  const aliases = getItemSourceAliases(item);
+  if (aliases.length > 0) {
+    return toArrayUnique(
+      aliases.map((alias) => {
+        if (alias.agent) return alias.agent;
+        if (alias.name.includes('-')) return alias.name.split('-')[0];
+        return 'unknown';
+      })
+    );
   }
-  return 'unknown';
+  if (item.sourceAgent) return [item.sourceAgent];
+  if (typeof item.sourceName === 'string' && item.sourceName.includes('-')) {
+    return [item.sourceName.split('-')[0]];
+  }
+  return ['unknown'];
 }
 
 function computeSkillType(entries) {
-  const scopes = new Set(entries.map((entry) => entry.sourceScope).filter(Boolean));
+  const scopes = new Set(
+    entries.flatMap((entry) => getItemSourceAliases(entry).map((alias) => alias.scope).filter(Boolean))
+  );
   if (scopes.size === 1 && scopes.has('user')) return 'global';
   if (scopes.size === 1 && scopes.has('project')) return 'project';
   return 'mixed';
@@ -1925,7 +2105,9 @@ function aggregateAllLocalSkills(items) {
     rows.push({
       name: entries[0].normalized?.name || entries[0].name || entries[0].id,
       type: computeSkillType(entries),
-      agents: toArrayUnique(entries.map((entry) => deriveAgentName(entry))).sort((a, b) => a.localeCompare(b)),
+      agents: toArrayUnique(entries.flatMap((entry) => deriveAgentNames(entry))).sort((a, b) =>
+        a.localeCompare(b)
+      ),
       formats: toArrayUnique(entries.map((entry) => entry.sourceFormat).filter(Boolean)).sort((a, b) =>
         a.localeCompare(b)
       ),
@@ -2703,12 +2885,12 @@ async function getNearestWritableAncestor(targetPath) {
   while (true) {
     try {
       const stat = await fs.stat(current);
-      if (stat.isDirectory()) {
-        await fs.access(current, fsSync.constants.W_OK);
-        return { ready: true, path: current };
+      await fs.access(current, fsSync.constants.W_OK);
+      return { ready: true, path: current };
+    } catch (error) {
+      if (error?.code && error.code !== 'ENOENT') {
+        return { ready: false, path: current };
       }
-    } catch {
-      // keep walking up
     }
 
     const parent = path.dirname(current);
@@ -2719,9 +2901,28 @@ async function getNearestWritableAncestor(targetPath) {
   }
 }
 
-async function cmdDoctorAgents(config, context) {
+async function buildDoctorAgentMatrixRows(config, context, options = {}) {
   const projectRoot = context.projectRoot;
-  const sourceMap = new Map((config.sources || []).map((source) => [source.name, source]));
+  const homeDir = options.homeDir || HOME;
+  const pathExistsFn = options.pathExists || fsSync.existsSync;
+  const resolveWritable = options.resolveWritable || getNearestWritableAncestor;
+  const sourceMap = new Map();
+  for (const source of config.sources || []) {
+    if (!source || typeof source !== 'object') continue;
+    const aliases = uniqueSourceAliases([
+      ...(Array.isArray(source.sourceAliases) ? source.sourceAliases : []),
+      {
+        name: source.name,
+        agent: source.agent,
+        scope: source.scope
+      }
+    ]);
+    for (const alias of aliases) {
+      if (!sourceMap.has(alias.name)) {
+        sourceMap.set(alias.name, source);
+      }
+    }
+  }
   const targetMap = new Map(Object.entries(config.targets || {}));
   const rows = [];
 
@@ -2737,8 +2938,8 @@ async function cmdDoctorAgents(config, context) {
         format: scopeConfig.source.format,
         optional: true
       };
-      const sourcePath = resolveTemplatePath(sourceCfg.path, { projectRoot });
-      const sourceExists = fsSync.existsSync(sourcePath);
+      const sourcePath = resolveTemplatePath(sourceCfg.path, { projectRoot, homeDir });
+      const sourceExists = await Promise.resolve(pathExistsFn(sourcePath)).then(Boolean);
 
       const targetKey = `${agent.id}-${scope}`;
       const targetCfg = targetMap.get(targetKey) || {
@@ -2747,13 +2948,22 @@ async function cmdDoctorAgents(config, context) {
         format: scopeConfig.target.format,
         layout: scopeConfig.target.layout
       };
-      const targetPath = resolveTemplatePath(targetCfg.path, { projectRoot });
-      const writable = await getNearestWritableAncestor(path.dirname(targetPath));
+      const targetPath = resolveTemplatePath(targetCfg.path, { projectRoot, homeDir });
+      const writable = await resolveWritable(targetPath);
 
       rows.push({
         agent: agent.id,
+        displayName: agent.displayName || agent.id,
+        referenceId: agent.referenceId || agent.id,
         scope,
+        installFamily: agent.installFamily || 'dedicated',
+        canonicalDir: agent.canonicalDir || '',
         format: `${sourceCfg.format} -> ${targetCfg.format}`,
+        installed: await detectScopeInstalled(scopeConfig, {
+          projectRoot,
+          homeDir,
+          pathExists: pathExistsFn
+        }),
         sourceExists: sourceExists ? 'yes' : 'no',
         targetReady: writable.ready ? 'yes' : 'no',
         sourcePath,
@@ -2762,15 +2972,24 @@ async function cmdDoctorAgents(config, context) {
     }
   }
 
+  return rows;
+}
+
+async function cmdDoctorAgents(config, context) {
+  const rows = await buildDoctorAgentMatrixRows(config, context);
+
   console.log('\nAgent Matrix:');
   printTable(rows, [
     { label: 'Agent', get: (row) => row.agent, min: 8, max: 12 },
     { label: 'Scope', get: (row) => row.scope, min: 7, max: 7 },
+    { label: 'Family', get: (row) => row.installFamily, min: 9, max: 10 },
+    { label: 'Canonical', get: (row) => row.canonicalDir, min: 12, max: 20 },
     { label: 'Format', get: (row) => row.format, min: 18, max: 24 },
+    { label: 'Installed', get: (row) => row.installed, min: 9, max: 11 },
     { label: 'Source', get: (row) => row.sourceExists, min: 6, max: 6 },
     { label: 'Target', get: (row) => row.targetReady, min: 6, max: 6 },
-    { label: 'Source Path', get: (row) => row.sourcePath, min: 20, max: 55 },
-    { label: 'Target Path', get: (row) => row.targetPath, min: 20, max: 55 }
+    { label: 'Source Path', get: (row) => row.sourcePath, min: 20, max: 40 },
+    { label: 'Target Path', get: (row) => row.targetPath, min: 20, max: 40 }
   ]);
 }
 
@@ -2983,6 +3202,7 @@ export {
   AGENT_REGISTRY,
   APP_VERSION,
   buildDefaultConfig,
+  buildDoctorAgentMatrixRows,
   buildCleanupPlan,
   convertContentToFormat,
   detectProjectRoot,

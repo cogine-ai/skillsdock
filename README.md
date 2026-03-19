@@ -4,23 +4,16 @@
 
 This repository is intentionally **CLI-only**.
 
-## What Changed In v0.1.2
+## What Changed In v0.2.0
 
-- Added governance views:
-  - `all-local-skills`
-  - `skill-detail`
-- Added lifecycle tags:
-  - `regular`
-  - `disabled`
-  - `frozen`
-  - `deleted` (soft delete)
-- Added cleanup workflow:
-  - `cleanup --plan`
-  - `cleanup --apply`
-  - `cleanup --rollback <runId>`
-- Upgraded registry to canonical-path identity with legacy-key index compatibility.
-- Added structure manifests for multi-file skills and manifest hash based duplicate detection.
-- `sync` now skips `disabled` and `deleted` by default.
+- Expanded the built-in agent registry from 8 presets to 42 curated agents.
+- Added registry metadata for future routing logic:
+  - `referenceId`
+  - `installFamily`
+  - `canonicalDir`
+  - `detectInstalled`
+- Updated `doctor --agents` to show install family, canonical dir, and install detection status.
+- Kept default config generation registry-driven, so new presets automatically flow through `init` and `doctor`.
 
 ## Design Principle
 
@@ -65,6 +58,9 @@ skillsdock cleanup --plan
 
 # dry-run sync to OpenClaw user scope
 skillsdock sync --to openclaw --scope user --dry-run
+
+# inspect built-in agent compatibility + detection
+skillsdock doctor --agents
 ```
 
 ## Commands
@@ -102,6 +98,8 @@ skillsdock sync --to cursor --scope project
 skillsdock sync --to openclaw-user
 ```
 
+`skillsdock init` now seeds 42 built-in agent presets (84 default source/target entries across `user` and `project` scopes).
+
 ## Sync Modes
 
 - Default mode: `--mode symlink`
@@ -123,9 +121,9 @@ Behavior:
 - `openclaw-md` (`*.md`)
 - `opencode-md` (`*.md`)
 
-### `skill-md` Parsing Rules (v0.1.2)
+### `skill-md` Parsing Rules (v0.2.0)
 
-SkillsDock v0.1.2 aligns local `SKILL.md` parsing with the conventions used by [vercel-labs/skills](https://github.com/vercel-labs/skills):
+SkillsDock v0.2.0 aligns local `SKILL.md` parsing with the conventions used by [vercel-labs/skills](https://github.com/vercel-labs/skills):
 
 - `SKILL.md` must include YAML frontmatter.
 - Frontmatter must include string `name` and string `description`.
@@ -211,6 +209,16 @@ Registry version `2` includes:
 ## Compatibility Matrix
 
 See [COMPATIBILITY.md](./COMPATIBILITY.md).
+
+## Built-In Agent Registry
+
+The built-in registry now covers 42 agents, including `amp`, `antigravity`, `augment`, `gemini-cli`, `github-copilot`, `goose`, `roo`, `windsurf`, `zencoder`, `pochi`, and `adal`.
+
+Each registry entry includes:
+
+- native `user` + `project` scope source/target presets
+- `detectInstalled` paths for `doctor --agents`
+- `installFamily` and `canonicalDir` metadata for follow-up universal-agent logic
 
 ## Publish
 

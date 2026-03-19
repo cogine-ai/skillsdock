@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- Expanded the built-in agent registry from 8 presets to 42 curated agents.
+- Added per-agent metadata for future routing and install detection:
+  - `referenceId`
+  - `installFamily`
+  - `canonicalDir`
+  - `scopes.*.detectInstalled`
+- Updated `doctor --agents` to show install family, canonical dir, and installed detection status.
+- Kept `init`/default config generation registry-driven so the expanded preset matrix flows through without new commands.
+- Updated `README.md` and `COMPATIBILITY.md` to document the expanded registry and full compatibility table.
+
 ## 0.1.2
 
 - Added governance commands:
