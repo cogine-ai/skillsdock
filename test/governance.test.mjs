@@ -350,6 +350,180 @@ test('scan discovers deep skills declared in .claude-plugin marketplace manifest
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.count, 1);
   assert.equal(payload.items[0].name, 'plugin-review');
+  assert.equal(payload.items[0].pluginName, 'my-plugin');
+
+  result = runCli(['skill-detail', 'plugin-review', '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const detail = JSON.parse(result.stdout);
+  assert.equal(detail.count, 1);
+  assert.equal(detail.items[0].pluginName, 'my-plugin');
+});
+
+test('list and all-local-skills render stable grouped plugin views while keeping json additive', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-plugin-grouped-'));
+  const sourceDir = path.join(base, 'source');
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+
+  await mkdir(path.join(sourceDir, '.claude-plugin'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'standalone-skill'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'plugins', 'alpha-plugin', 'skills', 'alpha-review'), { recursive: true });
+
+  await writeFile(
+    path.join(sourceDir, '.claude-plugin', 'marketplace.json'),
+    JSON.stringify(
+      {
+        metadata: {
+          pluginRoot: './plugins'
+        },
+        plugins: [
+          {
+            name: 'alpha-plugin',
+            source: './alpha-plugin',
+            skills: ['./skills/alpha-review']
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  await writeFile(
+    path.join(sourceDir, 'standalone-skill', 'SKILL.md'),
+    `---\nname: standalone-skill\ndescription: standalone\n---\n\n# Standalone`,
+    'utf8'
+  );
+  await writeFile(
+    path.join(sourceDir, 'plugins', 'alpha-plugin', 'skills', 'alpha-review', 'SKILL.md'),
+    `---\nname: alpha-review\ndescription: plugin skill\n---\n\n# Alpha Review`,
+    'utf8'
+  );
+
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const cfg = JSON.parse(await readFile(configPath, 'utf8'));
+  cfg.sources = [
+    {
+      name: 'fixture-user',
+      agent: 'fixture',
+      scope: 'user',
+      path: sourceDir,
+      format: 'skill-md',
+      optional: false
+    }
+  ];
+  cfg.scan.maxDepth = 1;
+  await writeFile(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+
+  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['list', '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  let payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 2);
+  assert.equal(Array.isArray(payload.items), true);
+  assert.equal(payload.items.find((item) => item.id === 'alpha-review')?.pluginName, 'alpha-plugin');
+  assert.equal(payload.items.find((item) => item.id === 'standalone-skill')?.pluginName ?? null, null);
+
+  result = runCli(['list', '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Ungrouped \(1\)/);
+  assert.match(result.stdout, /Plugin: alpha-plugin \(1\)/);
+
+  result = runCli(['all-local-skills', '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 2);
+  assert.equal(Array.isArray(payload.items), true);
+  assert.equal(payload.items.find((item) => item.name === 'alpha-review')?.pluginName, 'alpha-plugin');
+  assert.equal(payload.items.find((item) => item.name === 'standalone-skill')?.pluginName ?? null, null);
+
+  result = runCli(['all-local-skills', '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Ungrouped \(1\)/);
+  assert.match(result.stdout, /Plugin: alpha-plugin \(1\)/);
+});
+
+test('scan refreshes pluginName for frozen items from manifest ownership metadata', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-plugin-frozen-'));
+  const sourceDir = path.join(base, 'source');
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+
+  await mkdir(path.join(sourceDir, '.claude-plugin'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'plugins', 'frozen-plugin', 'skills', 'frozen-review'), { recursive: true });
+
+  await writeFile(
+    path.join(sourceDir, '.claude-plugin', 'marketplace.json'),
+    JSON.stringify(
+      {
+        metadata: {
+          pluginRoot: './plugins'
+        },
+        plugins: [
+          {
+            name: 'frozen-plugin',
+            source: './frozen-plugin',
+            skills: ['./skills/frozen-review']
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  await writeFile(
+    path.join(sourceDir, 'plugins', 'frozen-plugin', 'skills', 'frozen-review', 'SKILL.md'),
+    `---\nname: frozen-review\ndescription: frozen plugin skill\n---\n\n# Frozen Review`,
+    'utf8'
+  );
+
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const cfg = JSON.parse(await readFile(configPath, 'utf8'));
+  cfg.sources = [
+    {
+      name: 'fixture-user',
+      agent: 'fixture',
+      scope: 'user',
+      path: sourceDir,
+      format: 'skill-md',
+      optional: false
+    }
+  ];
+  cfg.scan.maxDepth = 1;
+  await writeFile(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+
+  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const registry = JSON.parse(await readFile(registryPath, 'utf8'));
+  const itemKey = Object.keys(registry.items).find((key) => registry.items[key].id === 'frozen-review');
+  assert.equal(typeof itemKey, 'string');
+  registry.items[itemKey].policy = {
+    tag: 'frozen',
+    reason: 'protect',
+    updatedAt: '2026-03-19T00:00:00.000Z'
+  };
+  delete registry.items[itemKey].pluginName;
+  await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`, 'utf8');
+
+  result = runCli(['scan', sourceDir, '--config', configPath, '--registry', registryPath], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['skill-detail', 'frozen-review', '--registry', registryPath, '--json'], base);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+  assert.equal(payload.items[0].policy?.tag, 'frozen');
+  assert.equal(payload.items[0].pluginName, 'frozen-plugin');
 });
 
 test('doctor --skills-spec flags non-spec skill names', async () => {

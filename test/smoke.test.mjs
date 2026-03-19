@@ -23,7 +23,7 @@ function runCli(args, cwd, envOverrides = {}) {
   return result;
 }
 
-test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> cleanup plan -> sync dry-run -> doctor --agents', async () => {
+test('smoke: init -> scan -> list -> all-local-skills -> skill-detail -> tag set -> cleanup plan -> sync dry-run -> doctor --agents', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-smoke-'));
   const homeDir = path.join(base, 'home');
   const sourceDir = path.join(base, 'source-skills');
@@ -81,6 +81,15 @@ test('smoke: init -> scan -> all-local-skills -> skill-detail -> tag set -> clea
     HOME: homeDir
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['list', '--config', configPath, '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const listPayload = JSON.parse(result.stdout);
+  assert.equal(listPayload.count, 1);
+  assert.equal(Array.isArray(listPayload.items), true);
+  assert.equal(listPayload.items[0].pluginName ?? null, null);
 
   result = runCli(['all-local-skills', '--config', configPath, '--registry', registryPath, '--json'], base, {
     HOME: homeDir

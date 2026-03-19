@@ -14,6 +14,10 @@
   - seed `agents-user` / `agents-project` scan sources for `~/.agents/skills` and `${projectRoot}/.agents/skills`
   - merge same-realpath canonical copies in `list` and `all-local-skills`
   - sync universal `skill-md` agents directly into `.agents/skills` without redundant native symlinks
+- Added plugin grouping metadata and views:
+  - persist manifest-declared `pluginName` on scanned registry items
+  - render stable grouped sections in `list` and `all-local-skills`
+  - keep `--json` output backward compatible with additive fields only
 - Updated `README.md` and `COMPATIBILITY.md` to document the expanded registry and full compatibility table.
 
 ## 0.1.2
