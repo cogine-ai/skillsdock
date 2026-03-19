@@ -175,3 +175,91 @@ test('canonical list views prefer .agents/skills and dedupe same-realpath copies
   assert.equal(allLocalPayload.items[0].items.length, 1);
   assert.equal(allLocalPayload.items[0].items[0].canonicalPath, path.join(canonicalRoot, 'demo', 'SKILL.md'));
 });
+
+test('dry-run sync counts a canonical-skip plus mirror symlink as a successful symlink', async () => {
+  const baseDir = await mkdtemp(path.join(tmpdir(), 'skillsdock-canonical-mirror-dry-run-'));
+  const homeDir = path.join(baseDir, 'home');
+  const projectRoot = path.join(baseDir, 'project');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(projectRoot, { recursive: true });
+
+  await writeDemoSkill(path.join(homeDir, '.agents', 'skills'), 'demo');
+
+  const { configPath, registryPath } = await initConfig(baseDir, projectRoot, homeDir);
+  const scanResult = runCli(['scan', '--config', configPath, '--registry', registryPath], projectRoot, {
+    HOME: homeDir
+  });
+  assert.equal(scanResult.status, 0, scanResult.stderr || scanResult.stdout);
+
+  const syncResult = runCli(
+    [
+      'sync',
+      '--to',
+      'claude',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'fail',
+      '--dry-run'
+    ],
+    projectRoot,
+    {
+      HOME: homeDir
+    }
+  );
+  assert.equal(syncResult.status, 0, syncResult.stderr || syncResult.stdout);
+  assert.match(syncResult.stdout, /Dry run: 1 file\(s\) would be synced .*skipped=0/);
+  assert.match(syncResult.stdout, /Result: symlinked=1 .* skipped=0 failed=0/);
+});
+
+test('sync counts mirror failures as failed outcomes for non-universal skill-md targets', async () => {
+  const baseDir = await mkdtemp(path.join(tmpdir(), 'skillsdock-canonical-mirror-fail-'));
+  const homeDir = path.join(baseDir, 'home');
+  const projectRoot = path.join(baseDir, 'project');
+  const sourceDir = path.join(baseDir, 'source');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(projectRoot, { recursive: true });
+
+  await writeDemoSkill(sourceDir, 'demo');
+  await mkdir(path.join(homeDir, '.claude', 'skills', 'demo', 'SKILL.md'), { recursive: true });
+
+  const { configPath, registryPath } = await initConfig(baseDir, projectRoot, homeDir);
+  const scanResult = runCli(
+    ['scan', sourceDir, '--config', configPath, '--registry', registryPath],
+    projectRoot,
+    {
+      HOME: homeDir
+    }
+  );
+  assert.equal(scanResult.status, 0, scanResult.stderr || scanResult.stdout);
+
+  const syncResult = runCli(
+    [
+      'sync',
+      '--to',
+      'claude',
+      '--scope',
+      'user',
+      '--config',
+      configPath,
+      '--registry',
+      registryPath,
+      '--mode',
+      'symlink',
+      '--fallback',
+      'fail'
+    ],
+    projectRoot,
+    {
+      HOME: homeDir
+    }
+  );
+  assert.equal(syncResult.status, 1, syncResult.stderr || syncResult.stdout);
+  assert.match(syncResult.stdout, /Result: symlinked=0 copied=0 fallbackCopied=0 skipped=0 failed=1/);
+});

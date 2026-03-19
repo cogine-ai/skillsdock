@@ -1302,19 +1302,20 @@ function normalizeStructureManifest(manifest, canonicalPath, fileHash = null) {
   };
 }
 
-function getCanonicalSkillRoots(options = {}) {
-  const projectRoot = options.projectRoot || detectProjectRoot(process.cwd());
-  const homeDir = options.homeDir || HOME;
-  return [
-    resolveTemplatePath(USER_CANONICAL_SKILLS_PATH, { projectRoot, homeDir }),
-    resolveTemplatePath(PROJECT_CANONICAL_SKILLS_PATH, { projectRoot, homeDir })
-  ];
-}
-
 function isCanonicalSkillPath(candidatePath, options = {}) {
   if (!candidatePath) return false;
-  const resolvedCandidate = path.resolve(candidatePath);
-  return getCanonicalSkillRoots(options).some((rootPath) => isContainedIn(resolvedCandidate, rootPath));
+  let currentPath = path.resolve(candidatePath);
+
+  while (true) {
+    const parentPath = path.dirname(currentPath);
+    if (path.basename(currentPath) === 'skills' && path.basename(parentPath) === '.agents') {
+      return true;
+    }
+    if (parentPath === currentPath) {
+      return false;
+    }
+    currentPath = parentPath;
+  }
 }
 
 function pickPreferredCanonicalPath(candidates, options = {}) {
@@ -2867,6 +2868,24 @@ async function executeMirrorSymlink(sourcePath, destPath, dryRun) {
   }
 }
 
+function combineSyncStatuses(primaryStatus, mirrorStatus = null) {
+  if (!mirrorStatus || mirrorStatus === 'skipped') {
+    return primaryStatus;
+  }
+  if (mirrorStatus === 'failed') {
+    return 'failed';
+  }
+  return mirrorStatus;
+}
+
+function incrementSyncCounter(counters, status) {
+  if (status === 'skipped') counters.skipped += 1;
+  else if (status === 'symlinked') counters.symlinked += 1;
+  else if (status === 'copied') counters.copied += 1;
+  else if (status === 'fallbackCopied') counters.fallbackCopied += 1;
+  else counters.failed += 1;
+}
+
 /**
  * 以原子方式将内容写入指定文件路径，确保在写入过程中不会留下部分写入的目标文件。
  *
@@ -3074,15 +3093,7 @@ async function cmdSync(flags, context) {
     if (primaryResult.warning) {
       console.log(primaryResult.warning);
     }
-    if (primaryResult.status === 'skipped') counters.skipped += 1;
-    else if (primaryResult.status === 'symlinked') counters.symlinked += 1;
-    else if (primaryResult.status === 'copied') counters.copied += 1;
-    else if (primaryResult.status === 'fallbackCopied') counters.fallbackCopied += 1;
-    else counters.failed += 1;
-
-    if (primaryResult.status === 'failed') {
-      continue;
-    }
+    let finalStatus = primaryResult.status;
 
     if (useCanonicalSkillTarget && !isUniversalSkillTarget) {
       const mirrorDest = getTargetFilePath(basePath, targetCfg, item);
@@ -3090,10 +3101,10 @@ async function cmdSync(flags, context) {
       if (mirrorResult.warning) {
         console.log(mirrorResult.warning);
       }
-      if (mirrorResult.status === 'failed') {
-        counters.failed += 1;
-      }
+      finalStatus = combineSyncStatuses(primaryResult.status, mirrorResult.status);
     }
+
+    incrementSyncCounter(counters, finalStatus);
   }
 
   if (dryRun) {
@@ -3464,5 +3475,6 @@ export {
   planSyncWriteMode,
   resolveSelectorMatches,
   resolveSyncTarget,
-  resolveTemplatePath
+  resolveTemplatePath,
+  pickPreferredCanonicalPath
 };

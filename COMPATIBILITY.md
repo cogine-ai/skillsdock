@@ -63,7 +63,7 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
 - `SKILL.md` must contain YAML frontmatter with string `name` and `description`.
 - `metadata.internal: true` is skipped by default during scan.
   - Set `INSTALL_INTERNAL_SKILLS=1` or `INSTALL_INTERNAL_SKILLS=true` to include internal skills.
-- Canonical-first scan always includes:
+- Default scan sources include the canonical `.agents/skills` directories when you run `skillsdock scan` without explicit path arguments:
   - `~/.agents/skills`
   - `${projectRoot}/.agents/skills`
 - Scan discovery follows the same priority style as `vercel-labs/skills`:
