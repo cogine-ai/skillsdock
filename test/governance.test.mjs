@@ -626,3 +626,171 @@ test('doctor --skills-spec validates plugin manifest path safety', async () => {
   assert.match(result.stdout, /Invalid pluginRoot/);
   assert.match(result.stdout, /must start with "\.\/"/);
 });
+
+test('scan merges readonly vercel lock metadata into registry items and keeps governance flows working', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-vercel-lock-'));
+  const homeDir = path.join(base, 'home');
+  const agentsDir = path.join(homeDir, '.agents');
+  const sourceDir = path.join(agentsDir, 'skills');
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+  const lockPath = path.join(agentsDir, '.skill-lock.json');
+
+  await mkdir(path.join(sourceDir, 'external-review'), { recursive: true });
+  await writeFile(
+    path.join(sourceDir, 'external-review', 'SKILL.md'),
+    `---\nname: external-review\ndescription: External review skill\n---\n\n# External`,
+    'utf8'
+  );
+  await writeFile(
+    lockPath,
+    `${JSON.stringify(
+      {
+        version: 3,
+        skills: {
+          'external-review': {
+            source: 'vercel-labs/agent-skills',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/vercel-labs/agent-skills/tree/main/skills/external-review',
+            skillPath: 'skills/external-review/SKILL.md',
+            skillFolderHash: 'tree-sha-123',
+            installedAt: '2026-03-01T00:00:00.000Z',
+            updatedAt: '2026-03-02T00:00:00.000Z',
+            pluginName: 'vercel-plugin'
+          }
+        }
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  );
+
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['scan', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['list', '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  let payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+  assert.equal(payload.items[0].pluginName, 'vercel-plugin');
+  assert.equal(payload.items[0].externalSourceUrl, 'https://github.com/vercel-labs/agent-skills/tree/main/skills/external-review');
+  assert.equal(payload.items[0].externalHash, 'tree-sha-123');
+
+  result = runCli(['all-local-skills', '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+  assert.equal(payload.items[0].pluginName, 'vercel-plugin');
+  assert.equal(payload.items[0].items[0].externalSourceType, 'github');
+
+  result = runCli(['skill-detail', 'external-review', '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.count, 1);
+  assert.equal(payload.items[0].externalSourceUrl, 'https://github.com/vercel-labs/agent-skills/tree/main/skills/external-review');
+  assert.equal(payload.items[0].externalPluginName, 'vercel-plugin');
+  assert.equal(payload.items[0].externalHash, 'tree-sha-123');
+
+  result = runCli(['tag', 'set', 'external-review', '--tag', 'frozen', '--registry', registryPath], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['cleanup', '--plan', '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(Array.isArray(payload.actions), true);
+
+  result = runCli(['skill-detail', 'external-review', '--registry', registryPath, '--json'], base, {
+    HOME: homeDir
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.items[0].policy?.tag, 'frozen');
+});
+
+test('doctor reports vercel lockfile presence and unmatched entries via XDG state path', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-vercel-doctor-'));
+  const homeDir = path.join(base, 'home');
+  const xdgStateHome = path.join(base, 'xdg-state');
+  const skillsStateDir = path.join(xdgStateHome, 'skills');
+  const sourceDir = path.join(homeDir, '.agents', 'skills');
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+
+  await mkdir(path.join(sourceDir, 'present-skill'), { recursive: true });
+  await mkdir(skillsStateDir, { recursive: true });
+  await writeFile(
+    path.join(sourceDir, 'present-skill', 'SKILL.md'),
+    `---\nname: present-skill\ndescription: Present skill\n---\n\n# Present`,
+    'utf8'
+  );
+  await writeFile(
+    path.join(skillsStateDir, '.skill-lock.json'),
+    `${JSON.stringify(
+      {
+        version: 3,
+        skills: {
+          'present-skill': {
+            source: 'org/repo',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/org/repo/tree/main/skills/present-skill',
+            skillPath: 'skills/present-skill/SKILL.md',
+            skillFolderHash: 'hash-present',
+            installedAt: '2026-03-01T00:00:00.000Z',
+            updatedAt: '2026-03-02T00:00:00.000Z'
+          },
+          'missing-skill': {
+            source: 'org/repo',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/org/repo/tree/main/skills/missing-skill',
+            skillPath: 'skills/missing-skill/SKILL.md',
+            skillFolderHash: 'hash-missing',
+            installedAt: '2026-03-01T00:00:00.000Z',
+            updatedAt: '2026-03-02T00:00:00.000Z'
+          }
+        }
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  );
+
+  let result = runCli(['init', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir,
+    XDG_STATE_HOME: xdgStateHome
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['scan', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir,
+    XDG_STATE_HOME: xdgStateHome
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCli(['doctor', '--config', configPath, '--registry', registryPath], base, {
+    HOME: homeDir,
+    XDG_STATE_HOME: xdgStateHome
+  });
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stdout, /\.skill-lock\.json/);
+  assert.match(result.stdout, /Lockfile entries: 2/);
+  assert.match(result.stdout, /missing-skill/);
+});

@@ -18,6 +18,11 @@
   - persist manifest-declared `pluginName` on scanned registry items
   - render stable grouped sections in `list` and `all-local-skills`
   - keep `--json` output backward compatible with additive fields only
+- Added read-only `vercel-labs/skills` lockfile interop:
+  - read `$XDG_STATE_HOME/skills/.skill-lock.json` or `~/.agents/.skill-lock.json` during `scan`
+  - merge additive external metadata such as `externalSourceUrl`, `externalHash`, and `externalPluginName` onto matched `~/.agents/skills/*` registry items
+  - keep local files as the source of truth; unmatched lock entries do not create synthetic skills
+  - extend `doctor` with lockfile presence, version, and unmatched-entry health checks
 - Updated `README.md` and `COMPATIBILITY.md` to document the expanded registry and full compatibility table.
 
 ## 0.1.2

@@ -26,15 +26,39 @@ function runCli(args, cwd, envOverrides = {}) {
 test('smoke: init -> scan -> list -> all-local-skills -> skill-detail -> tag set -> cleanup plan -> sync dry-run -> doctor --agents', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-smoke-'));
   const homeDir = path.join(base, 'home');
-  const sourceDir = path.join(base, 'source-skills');
+  const sourceDir = path.join(homeDir, '.agents', 'skills');
+  const agentsDir = path.join(homeDir, '.agents');
   const targetUserDir = path.join(base, 'target-user');
   const targetProjectDir = path.join(base, 'target-project');
 
   await mkdir(homeDir, { recursive: true });
-  await mkdir(path.join(sourceDir, 'demo'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'demo-skill'), { recursive: true });
   await writeFile(
-    path.join(sourceDir, 'demo', 'SKILL.md'),
+    path.join(sourceDir, 'demo-skill', 'SKILL.md'),
     `---\nname: "Demo Skill"\ndescription: "Demo skill for smoke"\n---\n\n# Demo\nhello`,
+    'utf8'
+  );
+  await writeFile(
+    path.join(agentsDir, '.skill-lock.json'),
+    `${JSON.stringify(
+      {
+        version: 3,
+        skills: {
+          'demo-skill': {
+            source: 'vercel-labs/agent-skills',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/vercel-labs/agent-skills/tree/main/skills/demo-skill',
+            skillPath: 'skills/demo-skill/SKILL.md',
+            skillFolderHash: 'demo-folder-hash',
+            installedAt: '2026-03-01T00:00:00.000Z',
+            updatedAt: '2026-03-02T00:00:00.000Z',
+            pluginName: 'demo-plugin'
+          }
+        }
+      },
+      null,
+      2
+    )}\n`,
     'utf8'
   );
 
@@ -89,7 +113,9 @@ test('smoke: init -> scan -> list -> all-local-skills -> skill-detail -> tag set
   const listPayload = JSON.parse(result.stdout);
   assert.equal(listPayload.count, 1);
   assert.equal(Array.isArray(listPayload.items), true);
-  assert.equal(listPayload.items[0].pluginName ?? null, null);
+  assert.equal(listPayload.items[0].pluginName, 'demo-plugin');
+  assert.equal(listPayload.items[0].externalSourceUrl, 'https://github.com/vercel-labs/agent-skills/tree/main/skills/demo-skill');
+  assert.equal(listPayload.items[0].externalHash, 'demo-folder-hash');
 
   result = runCli(['all-local-skills', '--config', configPath, '--registry', registryPath, '--json'], base, {
     HOME: homeDir
@@ -97,6 +123,7 @@ test('smoke: init -> scan -> list -> all-local-skills -> skill-detail -> tag set
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const allLocalPayload = JSON.parse(result.stdout);
   assert.equal(allLocalPayload.count > 0, true);
+  assert.equal(allLocalPayload.items[0].pluginName, 'demo-plugin');
 
   const firstId = allLocalPayload.items[0].items[0].id;
   result = runCli(['skill-detail', firstId, '--registry', registryPath, '--json'], base, {

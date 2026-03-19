@@ -100,6 +100,9 @@ const DEFAULT_REGISTRY = {
   cleanupHistory: []
 };
 
+const EXTERNAL_SKILL_LOCK_FILE = '.skill-lock.json';
+const EXTERNAL_SKILL_LOCK_VERSION = 3;
+
 function makeCliError(message, exitCode = 1) {
   const error = new Error(message);
   error.exitCode = exitCode;
@@ -483,6 +486,148 @@ function pushUniqueWarning(warnings, message) {
 function normalizePluginName(value) {
   const pluginName = String(value || '').trim();
   return pluginName.length > 0 ? pluginName : null;
+}
+
+function normalizeOptionalString(value) {
+  const text = String(value || '').trim();
+  return text.length > 0 ? text : null;
+}
+
+function normalizeExternalSkillMetadata(input) {
+  const data = input && typeof input === 'object' ? input : {};
+  return {
+    externalSource: normalizeOptionalString(data.externalSource),
+    externalSourceType: normalizeOptionalString(data.externalSourceType),
+    externalSourceUrl: normalizeOptionalString(data.externalSourceUrl),
+    externalSkillPath: normalizeOptionalString(data.externalSkillPath),
+    externalHash: normalizeOptionalString(data.externalHash),
+    externalPluginName: normalizePluginName(data.externalPluginName),
+    externalInstalledAt: normalizeIsoOrNull(data.externalInstalledAt),
+    externalUpdatedAt: normalizeIsoOrNull(data.externalUpdatedAt)
+  };
+}
+
+function getExternalSkillInstallDir(homeDir = HOME) {
+  return path.resolve(expandHomePath('~/.agents/skills', homeDir));
+}
+
+function getExternalSkillLockPath(homeDir = HOME) {
+  const xdgStateHome = normalizeOptionalString(process.env.XDG_STATE_HOME);
+  if (xdgStateHome) {
+    return path.resolve(expandHomePath(path.join(xdgStateHome, 'skills', EXTERNAL_SKILL_LOCK_FILE), homeDir));
+  }
+  return path.resolve(path.join(expandHomePath('~/.agents', homeDir), EXTERNAL_SKILL_LOCK_FILE));
+}
+
+function mapExternalSkillLockEntry(skillName, entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  return {
+    skillName: String(skillName || '').trim(),
+    source: normalizeOptionalString(entry.source),
+    sourceType: normalizeOptionalString(entry.sourceType),
+    sourceUrl: normalizeOptionalString(entry.sourceUrl),
+    skillPath: normalizeOptionalString(entry.skillPath),
+    skillFolderHash: normalizeOptionalString(entry.skillFolderHash),
+    installedAt: normalizeIsoOrNull(entry.installedAt),
+    updatedAt: normalizeIsoOrNull(entry.updatedAt),
+    pluginName: normalizePluginName(entry.pluginName)
+  };
+}
+
+async function readExternalSkillLock(homeDir = HOME) {
+  const lockPath = getExternalSkillLockPath(homeDir);
+  const state = {
+    path: lockPath,
+    exists: false,
+    healthy: true,
+    version: null,
+    count: 0,
+    issues: [],
+    entriesByName: new Map(),
+    entriesByPath: new Map()
+  };
+
+  if (!(await pathExists(lockPath))) {
+    return state;
+  }
+
+  state.exists = true;
+
+  let parsed;
+  try {
+    const raw = await fs.readFile(lockPath, 'utf8');
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    state.healthy = false;
+    state.issues.push(
+      `External lockfile is unreadable: ${lockPath} (${error instanceof Error ? error.message : String(error)})`
+    );
+    return state;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    state.healthy = false;
+    state.issues.push(`External lockfile must be a JSON object: ${lockPath}`);
+    return state;
+  }
+
+  state.version = Number.isInteger(parsed.version) ? parsed.version : null;
+  if (state.version === null) {
+    state.healthy = false;
+    state.issues.push(`External lockfile is missing numeric version metadata: ${lockPath}`);
+  } else if (state.version < EXTERNAL_SKILL_LOCK_VERSION) {
+    state.healthy = false;
+    state.issues.push(
+      `External lockfile version ${state.version} is older than supported version ${EXTERNAL_SKILL_LOCK_VERSION}: ${lockPath}`
+    );
+  }
+
+  const skills =
+    parsed.skills && typeof parsed.skills === 'object' && !Array.isArray(parsed.skills) ? parsed.skills : null;
+  if (!skills) {
+    state.healthy = false;
+    state.issues.push(`External lockfile is missing a skills map: ${lockPath}`);
+    return state;
+  }
+
+  const installDir = getExternalSkillInstallDir(homeDir);
+  for (const [skillName, entry] of Object.entries(skills)) {
+    const normalizedEntry = mapExternalSkillLockEntry(skillName, entry);
+    if (!normalizedEntry?.skillName) continue;
+    state.entriesByName.set(normalizedEntry.skillName, normalizedEntry);
+    state.entriesByPath.set(path.join(installDir, normalizedEntry.skillName, 'SKILL.md'), normalizedEntry);
+  }
+  state.count = state.entriesByName.size;
+  return state;
+}
+
+function resolveExternalSkillMetadataForFile(filePath, skillId, lockState, homeDir = HOME) {
+  if (!lockState || !lockState.healthy) return normalizeExternalSkillMetadata(null);
+
+  const normalizedFilePath = path.resolve(filePath);
+  const installDir = getExternalSkillInstallDir(homeDir);
+  if (!isContainedIn(normalizedFilePath, installDir)) {
+    return normalizeExternalSkillMetadata(null);
+  }
+
+  const folderName = path.basename(path.dirname(normalizedFilePath));
+  const matchedEntry =
+    lockState.entriesByPath.get(normalizedFilePath) ||
+    lockState.entriesByName.get(String(skillId || '').trim()) ||
+    lockState.entriesByName.get(folderName);
+
+  if (!matchedEntry) return normalizeExternalSkillMetadata(null);
+
+  return normalizeExternalSkillMetadata({
+    externalSource: matchedEntry.source,
+    externalSourceType: matchedEntry.sourceType,
+    externalSourceUrl: matchedEntry.sourceUrl,
+    externalSkillPath: matchedEntry.skillPath,
+    externalHash: matchedEntry.skillFolderHash,
+    externalPluginName: matchedEntry.pluginName,
+    externalInstalledAt: matchedEntry.installedAt,
+    externalUpdatedAt: matchedEntry.updatedAt
+  });
 }
 
 async function getPluginSkillSearchResult(basePath) {
@@ -1499,7 +1644,40 @@ function mergeRegistryItems(existing, incoming) {
   merged.content = mergeNonEmptyStrings(latest.content, older.content);
   merged.hash = mergeNonEmptyStrings(latest.hash, older.hash);
   merged.manifestHash = mergeNonEmptyStrings(latest.manifestHash, older.manifestHash || merged.hash);
-  merged.pluginName = normalizePluginName(latest.pluginName) || normalizePluginName(older.pluginName);
+  const latestExternal = normalizeExternalSkillMetadata(latest);
+  const olderExternal = normalizeExternalSkillMetadata(older);
+  merged.externalSource =
+    Object.prototype.hasOwnProperty.call(latest, 'externalSource') ? latestExternal.externalSource : olderExternal.externalSource;
+  merged.externalSourceType =
+    Object.prototype.hasOwnProperty.call(latest, 'externalSourceType')
+      ? latestExternal.externalSourceType
+      : olderExternal.externalSourceType;
+  merged.externalSourceUrl =
+    Object.prototype.hasOwnProperty.call(latest, 'externalSourceUrl')
+      ? latestExternal.externalSourceUrl
+      : olderExternal.externalSourceUrl;
+  merged.externalSkillPath =
+    Object.prototype.hasOwnProperty.call(latest, 'externalSkillPath')
+      ? latestExternal.externalSkillPath
+      : olderExternal.externalSkillPath;
+  merged.externalHash =
+    Object.prototype.hasOwnProperty.call(latest, 'externalHash') ? latestExternal.externalHash : olderExternal.externalHash;
+  merged.externalPluginName =
+    Object.prototype.hasOwnProperty.call(latest, 'externalPluginName')
+      ? latestExternal.externalPluginName
+      : olderExternal.externalPluginName;
+  merged.externalInstalledAt =
+    Object.prototype.hasOwnProperty.call(latest, 'externalInstalledAt')
+      ? latestExternal.externalInstalledAt
+      : olderExternal.externalInstalledAt;
+  merged.externalUpdatedAt =
+    Object.prototype.hasOwnProperty.call(latest, 'externalUpdatedAt')
+      ? latestExternal.externalUpdatedAt
+      : olderExternal.externalUpdatedAt;
+  merged.pluginName =
+    normalizePluginName(latest.pluginName) ||
+    normalizePluginName(older.pluginName) ||
+    merged.externalPluginName;
   merged.structureManifest = normalizeStructureManifest(
     latest.structureManifest || older.structureManifest,
     merged.canonicalPath,
@@ -1609,6 +1787,7 @@ function makeRegistryItemFromUnknown(rawItem, legacyKey = '') {
     hash,
     manifestHash,
     pluginName: normalizePluginName(item.pluginName),
+    ...normalizeExternalSkillMetadata(item),
     policy: normalizePolicy(item.policy),
     structureManifest: normalizeStructureManifest(item.structureManifest, canonicalPath, hash),
     state: String(item.state || 'active'),
@@ -1803,6 +1982,7 @@ async function cmdScan(flags, positionalArgs, context) {
   const projectRoot = context.projectRoot;
   const { config } = await loadConfig(flags.config, projectRoot);
   const { registryPath, registry } = await loadRegistry(flags.registry);
+  const externalLock = await readExternalSkillLock();
 
   const now = new Date().toISOString();
   const sourceInputs =
@@ -1897,6 +2077,7 @@ async function cmdScan(flags, positionalArgs, context) {
       const realKey = makeCanonicalKey(realPath);
       const pathKey = makeCanonicalKey(normalizedPath);
       const existing = registry.items[realKey] || registry.items[pathKey];
+      const existingExternalMetadata = resolveExternalSkillMetadataForFile(filePath, existing?.id, externalLock);
       const canonicalPath = pickPreferredCanonicalPath(
         [existing?.canonicalPath, normalizedPath, realPath],
         context
@@ -1916,12 +2097,16 @@ async function cmdScan(flags, positionalArgs, context) {
       if (existing && isFrozen(existing)) {
         registry.items[realKey] = setItemSourceAliases({
           ...existing,
+          ...existingExternalMetadata,
           key: realKey,
           canonicalPath,
           realPath,
           sourcePath: canonicalPath,
           sourceFormat: existing.sourceFormat || sourceFormat,
-          pluginName: normalizePluginName(existing.pluginName) || resolvePluginNameForFile(filePath, pluginOwnerships),
+          pluginName:
+            normalizePluginName(existing.pluginName) ||
+            resolvePluginNameForFile(filePath, pluginOwnerships) ||
+            existingExternalMetadata.externalPluginName,
           legacyKeys: Array.from(new Set(legacyKeys)),
           state: 'active',
           firstSeenAt: existing.firstSeenAt || now,
@@ -1947,6 +2132,8 @@ async function cmdScan(flags, positionalArgs, context) {
         continue;
       }
 
+      const externalMetadata = resolveExternalSkillMetadataForFile(filePath, parsed.id, externalLock);
+
       const changed =
         !existing || existing.hash !== parsed.hash || (existing.manifestHash || '') !== parsed.manifestHash;
 
@@ -1957,11 +2144,13 @@ async function cmdScan(flags, positionalArgs, context) {
       registry.items[realKey] = setItemSourceAliases({
         ...existing,
         ...parsed,
+        ...externalMetadata,
         key: realKey,
         canonicalPath,
         realPath,
         sourcePath: canonicalPath,
         legacyKeys: Array.from(new Set(legacyKeys)),
+        pluginName: parsed.pluginName || externalMetadata.externalPluginName,
         policy: normalizePolicy(existing?.policy, existing?.policy?.updatedAt || now),
         state: 'active',
         firstSeenAt: existing?.firstSeenAt || now,
@@ -2289,6 +2478,12 @@ async function cmdInspect(flags, positionalArgs) {
   console.log(`Primary: ${matched.isPrimary ? 'yes' : 'no'}`);
   console.log(`Hash: ${matched.hash}`);
   console.log(`Manifest Hash: ${matched.manifestHash || '-'}`);
+  if (matched.externalSourceUrl || matched.externalHash || matched.externalPluginName) {
+    console.log(`External Source URL: ${matched.externalSourceUrl || '-'}`);
+    console.log(`External Source Type: ${matched.externalSourceType || '-'}`);
+    console.log(`External Hash: ${matched.externalHash || '-'}`);
+    console.log(`External Plugin: ${matched.externalPluginName || '-'}`);
+  }
   console.log(`Created: ${matched.createdAt || '-'}`);
   console.log(`Updated: ${matched.updatedAt || '-'}`);
   console.log(`First Seen: ${matched.firstSeenAt || '-'}`);
@@ -2482,6 +2677,12 @@ async function cmdSkillDetail(flags, positionalArgs) {
     console.log(`Format: ${detail.sourceFormat}`);
     console.log(`Hash: ${detail.hash || '-'}`);
     console.log(`Manifest Hash: ${detail.manifestHash || '-'}`);
+    if (detail.externalSourceUrl || detail.externalHash || detail.externalPluginName) {
+      console.log(`External Source URL: ${detail.externalSourceUrl || '-'}`);
+      console.log(`External Source Type: ${detail.externalSourceType || '-'}`);
+      console.log(`External Hash: ${detail.externalHash || '-'}`);
+      console.log(`External Plugin: ${detail.externalPluginName || '-'}`);
+    }
     console.log(`Included Files: ${detail.structureManifest?.includedFiles?.length || 0}`);
     if (Array.isArray(detail.structureManifest?.parseWarnings) && detail.structureManifest.parseWarnings.length > 0) {
       for (const warning of detail.structureManifest.parseWarnings) {
@@ -3471,6 +3672,49 @@ async function collectSkillsSpecDiagnostics(config, context) {
   return { issues, notes };
 }
 
+async function collectExternalLockDiagnostics(registry) {
+  const lockState = await readExternalSkillLock();
+  const issues = [];
+  const notes = [];
+
+  if (!lockState.exists) {
+    notes.push(`External lockfile optional and missing: ${lockState.path}`);
+    return { issues, notes };
+  }
+
+  notes.push(`External lockfile: ${lockState.path}`);
+
+  if (!lockState.healthy) {
+    issues.push(...lockState.issues);
+    return { issues, notes };
+  }
+
+  notes.push(`Lockfile version: ${lockState.version}`);
+  notes.push(`Lockfile entries: ${lockState.count}`);
+
+  const registryItems = getRegistryItems(registry);
+  for (const [skillName] of lockState.entriesByName) {
+    const expectedPath = path.join(getExternalSkillInstallDir(), skillName, 'SKILL.md');
+    if (!(await pathExists(expectedPath))) {
+      issues.push(`External lockfile entry missing local skill file: ${skillName} -> ${expectedPath}`);
+      continue;
+    }
+
+    const matched = registryItems.find(
+      (item) =>
+        item.id === skillName ||
+        item.canonicalPath === expectedPath ||
+        item.realPath === expectedPath ||
+        item.sourcePath === expectedPath
+    );
+    if (!matched) {
+      issues.push(`External lockfile entry is not present in registry: ${skillName} -> ${expectedPath}`);
+    }
+  }
+
+  return { issues, notes };
+}
+
 async function cmdDoctor(flags, context) {
   const projectRoot = context.projectRoot;
   const { configPath, config } = await loadConfig(flags.config, projectRoot);
@@ -3504,6 +3748,10 @@ async function cmdDoctor(flags, context) {
       }
     }
   }
+
+  const externalLock = await collectExternalLockDiagnostics(registry);
+  notes.push(...externalLock.notes);
+  issues.push(...externalLock.issues);
 
   for (const source of config.sources || []) {
     const sourcePath = resolveTemplatePath(source.path, { projectRoot });
