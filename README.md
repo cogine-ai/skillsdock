@@ -14,6 +14,10 @@ This repository is intentionally **CLI-only**.
   - `detectInstalled`
 - Updated `doctor --agents` to show install family, canonical dir, and install detection status.
 - Kept default config generation registry-driven, so new presets automatically flow through `init` and `doctor`.
+- Added canonical-first `.agents/skills` support for `skill-md` universal agents:
+  - default scan now includes `~/.agents/skills` and `${projectRoot}/.agents/skills`
+  - `list` / `all-local-skills` collapse same-realpath canonical copies
+  - universal `skill-md` sync writes canonical output without redundant native symlinks
 
 ## Design Principle
 
@@ -100,6 +104,11 @@ skillsdock sync --to openclaw-user
 
 `skillsdock init` now seeds 42 built-in agent presets (84 default source/target entries across `user` and `project` scopes).
 
+For `skill-md` universal agents, the default config also seeds canonical scan sources:
+
+- `agents-user` -> `~/.agents/skills`
+- `agents-project` -> `${projectRoot}/.agents/skills`
+
 ## Sync Modes
 
 - Default mode: `--mode symlink`
@@ -108,6 +117,9 @@ skillsdock sync --to openclaw-user
 Behavior:
 
 - If format conversion is needed, sync auto-copies (symlink is not possible).
+- Built-in `skill-md` targets now sync canonical-first:
+  - universal agents write directly into `.agents/skills`
+  - non-universal `skill-md` agents mirror from `.agents/skills` with a symlink
 - If symlink fails and fallback is `copy`, SkillsDock copies and prints a warning.
 - Symlink mode resolves destination parent symlinks before computing the link target, so symlinked target roots do not produce broken links.
 - If source and destination already resolve to the same real path, sync is a no-op for that item.
@@ -149,6 +161,14 @@ Default config file: `~/.skillsdock/config.json`
   "version": 2,
   "sources": [
     {
+      "name": "agents-user",
+      "agent": "agents",
+      "scope": "user",
+      "path": "~/.agents/skills",
+      "format": "skill-md",
+      "optional": true
+    },
+    {
       "name": "openclaw-user",
       "agent": "openclaw",
       "scope": "user",
@@ -157,10 +177,10 @@ Default config file: `~/.skillsdock/config.json`
       "optional": true
     },
     {
-      "name": "codex-project",
-      "agent": "codex",
+      "name": "agents-project",
+      "agent": "agents",
       "scope": "project",
-      "path": "${projectRoot}/.codex/skills",
+      "path": "${projectRoot}/.agents/skills",
       "format": "skill-md",
       "optional": true
     }

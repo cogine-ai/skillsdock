@@ -63,18 +63,25 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
 - `SKILL.md` must contain YAML frontmatter with string `name` and `description`.
 - `metadata.internal: true` is skipped by default during scan.
   - Set `INSTALL_INTERNAL_SKILLS=1` or `INSTALL_INTERNAL_SKILLS=true` to include internal skills.
+- Canonical-first scan always includes:
+  - `~/.agents/skills`
+  - `${projectRoot}/.agents/skills`
 - Scan discovery follows the same priority style as `vercel-labs/skills`:
   - common directories (such as `skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/`, etc.)
   - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` declared skill paths
   - recursive scan fallback
 - Frontmatter parsing is powered by `gray-matter`.
 - `skillsdock doctor --skills-spec` validates spec-convention compliance and plugin manifest path safety.
+- `list` and `all-local-skills` prefer canonical `.agents/skills` copies and collapse duplicate rows when multiple records resolve to the same real path.
 
 ## Sync Format Behavior
 
 - Same format + non-package source: symlink (default mode) or copy.
 - `.skill` source package: extracted and copied as converted content.
 - Cross-format sync: converted and copied.
+- Built-in `skill-md` targets sync canonical-first:
+  - universal agents write directly into `.agents/skills`
+  - non-universal agents keep their native target path as a symlink mirror of `.agents/skills`
 - Symlink writes resolve destination parent realpaths before computing relative link targets.
 - If source and destination already resolve to the same real path, the sync write is skipped.
 - Existing broken or circular destination symlinks are replaced safely before writing.

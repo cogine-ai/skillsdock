@@ -10,6 +10,10 @@
   - `scopes.*.detectInstalled`
 - Updated `doctor --agents` to show install family, canonical dir, and installed detection status.
 - Kept `init`/default config generation registry-driven so the expanded preset matrix flows through without new commands.
+- Added canonical-first `.agents/skills` handling for `skill-md` agents:
+  - seed `agents-user` / `agents-project` scan sources for `~/.agents/skills` and `${projectRoot}/.agents/skills`
+  - merge same-realpath canonical copies in `list` and `all-local-skills`
+  - sync universal `skill-md` agents directly into `.agents/skills` without redundant native symlinks
 - Updated `README.md` and `COMPATIBILITY.md` to document the expanded registry and full compatibility table.
 
 ## 0.1.2
