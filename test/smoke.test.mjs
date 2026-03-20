@@ -170,3 +170,81 @@ test('smoke: init -> scan -> list -> all-local-skills -> skill-detail -> tag set
   assert.match(result.stdout, /Installed/);
   assert.match(result.stdout, /Canonical/);
 });
+
+test('init skill scaffolds my-skill/SKILL.md with valid frontmatter', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-init-skill-dir-'));
+  const homeDir = path.join(base, 'home');
+  const env = {
+    HOME: homeDir,
+    XDG_STATE_HOME: path.join(base, 'state')
+  };
+
+  await mkdir(homeDir, { recursive: true });
+
+  let result = runCli(['init', 'skill', 'my-skill'], base, env);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Created skill template:/);
+
+  const skillPath = path.join(base, 'my-skill', 'SKILL.md');
+  const content = await readFile(skillPath, 'utf8');
+  assert.match(content, /^---\nname: "my-skill"\ndescription: ".+"\n---\n\n# my-skill\n/m);
+  assert.match(content, /## Description\n/);
+  assert.match(content, /## When To Use\n/);
+  assert.match(content, /## Instructions\n/);
+
+  const configPath = path.join(base, 'config.json');
+  const registryPath = path.join(base, 'registry.json');
+  result = runCli(['init', '--config', configPath, '--registry', registryPath], base, env);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.sources = [
+    {
+      name: 'local-skill',
+      agent: 'fixture',
+      scope: 'project',
+      path: path.join(base, 'my-skill'),
+      format: 'skill-md',
+      optional: false
+    }
+  ];
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+
+  const doctor = runCli(
+    ['doctor', '--skills-spec', '--config', configPath, '--registry', registryPath],
+    base,
+    env
+  );
+  assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
+  assert.match(doctor.stdout, /Skills spec checked files: 1/);
+  assert.match(doctor.stdout, /Doctor result: healthy/);
+});
+
+test('init skill without name scaffolds SKILL.md in cwd using directory name', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-init-skill-cwd-'));
+  const cwd = path.join(base, 'current-skill');
+  await mkdir(cwd, { recursive: true });
+
+  const result = runCli(['init', 'skill'], cwd);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const skillPath = path.join(cwd, 'SKILL.md');
+  const content = await readFile(skillPath, 'utf8');
+  assert.match(content, /^---\nname: "current-skill"\ndescription: ".+"\n---\n/m);
+  assert.match(result.stdout, /Created skill template:/);
+});
+
+test('init skill refuses to overwrite an existing SKILL.md', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-init-skill-existing-'));
+  const skillDir = path.join(base, 'existing-skill');
+  const skillPath = path.join(skillDir, 'SKILL.md');
+  const existingContent = 'keep me\n';
+
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(skillPath, existingContent, 'utf8');
+
+  const result = runCli(['init', 'skill', 'existing-skill'], base);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /already exists/i);
+  assert.equal(await readFile(skillPath, 'utf8'), existingContent);
+});

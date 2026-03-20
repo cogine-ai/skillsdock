@@ -293,6 +293,34 @@ function yamlQuote(value) {
   return JSON.stringify(String(value ?? ''));
 }
 
+function buildSkillTemplate(skillName) {
+  const normalizedName = slugify(skillName);
+  return `---
+name: ${yamlQuote(normalizedName)}
+description: ${yamlQuote(`Describe what ${normalizedName} does and when to use it.`)}
+---
+
+# ${normalizedName}
+
+## Description
+
+Describe the skill's purpose, inputs, and expected outcome.
+
+## When To Use
+
+Use this skill when:
+
+- the task clearly matches this skill's specialty
+- you need a repeatable workflow instead of ad-hoc instructions
+
+## Instructions
+
+1. State the goal this skill is helping with.
+2. Follow the workflow or guardrails this skill defines.
+3. Return the result in the format this skill expects.
+`;
+}
+
 async function ensureParentDir(filePath) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 }
@@ -1834,6 +1862,7 @@ ${APP_NAME} v${APP_VERSION}
 
 Usage:
   skillsdock init [--config <path>] [--registry <path>]
+  skillsdock init skill [name]
   skillsdock scan [paths...] [--config <path>] [--registry <path>]
   skillsdock all-local-skills [--config <path>] [--registry <path>] [--source <name>] [--scope <user|project>] [--tag <tag>] [--all] [--json]
   skillsdock skill-detail <selector> [--registry <path>] [--all-copies] [--json]
@@ -1849,6 +1878,7 @@ Usage:
 
 Examples:
   skillsdock init
+  skillsdock init skill my-skill
   skillsdock scan ~/Coding ~/Work
   skillsdock all-local-skills
   skillsdock tag set lint-check --tag frozen --reason "manual lock"
@@ -1893,7 +1923,28 @@ async function loadRegistry(registryPath) {
   return { registryPath: normalizedPath, registry };
 }
 
-async function cmdInit(flags, context) {
+async function cmdInitSkill(args, context) {
+  const requestedName = typeof args[0] === 'string' ? args[0].trim() : '';
+  const targetDir = requestedName ? path.resolve(context.cwd, requestedName) : context.cwd;
+  const defaultName = path.basename(targetDir);
+  const skillName = slugify(requestedName || defaultName);
+  const skillPath = path.join(targetDir, 'SKILL.md');
+
+  if (await pathExists(skillPath)) {
+    throw makeCliError(`SKILL.md already exists: ${skillPath}`, 1);
+  }
+
+  await ensureParentDir(skillPath);
+  await fs.writeFile(skillPath, buildSkillTemplate(skillName), 'utf8');
+  console.log(`Created skill template: ${skillPath}`);
+}
+
+async function cmdInit(flags, args, context) {
+  if (args[0] === 'skill') {
+    await cmdInitSkill(args.slice(1), context);
+    return;
+  }
+
   const projectRoot = context.projectRoot;
   const configPath = path.resolve(expandHomePath(flags.config || DEFAULT_CONFIG_PATH));
   const registryPath = path.resolve(expandHomePath(flags.registry || DEFAULT_REGISTRY_PATH));
@@ -3814,7 +3865,7 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
   }
 
   if (command === 'init') {
-    await cmdInit(flags, context);
+    await cmdInit(flags, args, context);
     return;
   }
   if (command === 'scan') {
