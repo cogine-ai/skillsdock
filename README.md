@@ -22,14 +22,20 @@ This repository is intentionally **CLI-only**.
   - `scan` persists `pluginName` on registry items when ownership is declared by plugin manifests
   - text `list` / `all-local-skills` render stable grouped sections for ungrouped and plugin-owned skills
   - `--json` output keeps the existing `count` + `items` envelope and only adds fields
+- Added read-only interop with `vercel-labs/skills` global lock metadata:
+  - `scan` reads `$XDG_STATE_HOME/skills/.skill-lock.json` or `~/.agents/.skill-lock.json`
+  - canonical `~/.agents/skills/*` files remain the source of truth for visibility and governance
+  - registry items may now retain additive external metadata such as `externalSourceUrl`, `externalHash`, and `externalPluginName`
+  - `doctor` reports lockfile presence, version, and unmatched entries without writing back to the external lockfile
 
 ## Design Principle
 
 SkillsDock uses a curated local agent path registry as a **pattern seed**.
 
 - It does **not** fetch skill content from external ecosystems at runtime.
-- It does **not** treat Vercel (or any other ecosystem) as the source of your skills.
+- It does **not** treat Vercel (or any other ecosystem) metadata as the source of your skills.
 - Source of truth remains your local files and configured source paths.
+- External lockfiles are read-only interoperability inputs, never authoritative content stores.
 
 ## Install
 
@@ -150,6 +156,9 @@ SkillsDock v0.2.0 aligns local `SKILL.md` parsing with the conventions used by [
   - Set `INSTALL_INTERNAL_SKILLS=1` (or `true`) to include internal skills in `scan`.
 - Discovery prioritizes common skills directories and `.claude-plugin` manifest-declared paths, then recursively scans as fallback.
 - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` ownership is persisted as `pluginName` on matching registry items.
+- `scan` also reads `vercel-labs/skills` global lock metadata from `$XDG_STATE_HOME/skills/.skill-lock.json` or `~/.agents/.skill-lock.json` in read-only mode.
+  - matched `~/.agents/skills/<name>/SKILL.md` files retain additive external metadata (`externalSourceUrl`, `externalHash`, `externalPluginName`, etc.)
+  - unmatched lock entries do not create synthetic skills; local files still control visibility
 - Frontmatter parsing uses [gray-matter](https://github.com/jonschlinkert/gray-matter) for compatibility and YAML edge cases.
 
 ### Grouped Text Views
@@ -162,6 +171,7 @@ SkillsDock v0.2.0 aligns local `SKILL.md` parsing with the conventions used by [
 - `--json` remains backward compatible:
   - top-level shape is still `{ "count": number, "items": [...] }`
   - registry items may now include `pluginName`
+  - registry items may now include `externalSourceUrl`, `externalHash`, `externalPluginName`, `externalSourceType`, and related read-only interop fields
   - aggregated `all-local-skills` rows may now include `pluginName` and `pluginNames`
 
 ### Skills Spec Validation
@@ -239,6 +249,15 @@ Registry version `2` includes:
   - `policy.updatedAt`
 - plugin ownership field:
   - `pluginName`
+- optional read-only interop fields:
+  - `externalSource`
+  - `externalSourceType`
+  - `externalSourceUrl`
+  - `externalSkillPath`
+  - `externalHash`
+  - `externalPluginName`
+  - `externalInstalledAt`
+  - `externalUpdatedAt`
 - structure manifest fields:
   - `structureManifest.entryFile`
   - `structureManifest.includedFiles`
