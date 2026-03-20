@@ -3,6 +3,7 @@
 ## 0.2.0
 
 - Expanded the built-in agent registry from 8 presets to 42 curated agents.
+- Added `skillsdock init skill [name]` to scaffold `SKILL.md` templates without changing existing config/registry init behavior.
 - Added per-agent metadata for future routing and install detection:
   - `referenceId`
   - `installFamily`

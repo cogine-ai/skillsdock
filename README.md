@@ -55,6 +55,9 @@ npx @cogineai/skillsdock --help
 # create or upgrade config + registry
 skillsdock init
 
+# scaffold a new SKILL.md in ./my-skill
+skillsdock init skill my-skill
+
 # scan configured sources
 skillsdock scan
 
@@ -84,6 +87,7 @@ skillsdock doctor --agents
 
 ```bash
 skillsdock init [--config <path>] [--registry <path>]
+skillsdock init skill [name]
 skillsdock scan [paths...] [--config <path>] [--registry <path>]
 skillsdock all-local-skills [--config <path>] [--registry <path>] [--source <name>] [--scope <user|project>] [--tag <tag>] [--all] [--json]
 skillsdock skill-detail <selector> [--registry <path>] [--all-copies] [--json]
@@ -116,6 +120,8 @@ skillsdock sync --to openclaw-user
 ```
 
 `skillsdock init` now seeds 42 built-in agent presets (84 default source/target entries across `user` and `project` scopes).
+
+`skillsdock init skill [name]` scaffolds a `SKILL.md` template with valid frontmatter plus `Description`, `When To Use`, and `Instructions` sections. If `[name]` is omitted, SkillsDock writes `SKILL.md` in the current directory and derives the default skill name from the directory name. Existing `SKILL.md` files are never overwritten.
 
 For `skill-md` universal agents, the default config also seeds canonical scan sources:
 
