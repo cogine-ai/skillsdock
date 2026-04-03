@@ -4,6 +4,17 @@
 
 ### Added
 
+- `skillsdock remove <selector>` — new command to clean up installed skill files, symlinks, and registry/lockfile entries:
+  - Resolves skills by id, key, or path via `resolveSelectorMatches()`
+  - Deletes canonical skill directories under `.agents/skills/`
+  - Scans and removes symlinks from non-universal agent directories that point to the canonical skill
+  - Sets registry tag to `deleted` and removes lockfile entries
+  - `--scope user|project` — restrict removal to a specific scope
+  - `--all --scope <scope>` — remove all skills in the given scope
+  - `--dry-run` — preview actions without modifying files
+  - `--force` — override `frozen` tag protection
+- Test suite `test/remove-command.test.mjs` covering normal removal, frozen protection, `--force`, `--dry-run`, `--all`, lockfile updates, registry tag updates, project scope, and error handling.
+
 - `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
 - `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
 - `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.

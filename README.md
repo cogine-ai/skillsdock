@@ -125,6 +125,8 @@ skillsdock cleanup --rollback <runId> [--registry <path>]
 skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
 skillsdock inspect <id|key|path> [--registry <path>] [--json]
 skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--registry <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+skillsdock remove <selector> [--scope <user|project>] [--dry-run] [--force] [--all-copies]
+skillsdock remove --all --scope <user|project> [--dry-run] [--force]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
 ```
@@ -171,6 +173,34 @@ Behavior:
 - If source and destination already resolve to the same real path, sync is a no-op for that item.
 - Existing broken or circular destination symlinks are replaced safely during sync.
 - Atomic copy writes are used (`tmp` + `rename`).
+
+## Remove
+
+`skillsdock remove` cleans up installed skill files, symlinks, and metadata:
+
+```bash
+# remove a single skill by id, key, or path
+skillsdock remove my-skill --scope user
+
+# dry run — preview what would be deleted
+skillsdock remove my-skill --scope user --dry-run
+
+# force remove a frozen skill
+skillsdock remove my-skill --scope user --force
+
+# remove all skills in a scope
+skillsdock remove --all --scope project
+```
+
+Behavior:
+
+- Deletes the canonical skill directory under `.agents/skills/<skill-name>/`.
+- Scans non-universal agent directories and removes symlinks pointing to the canonical skill.
+- Sets the registry tag to `deleted` (soft delete).
+- Removes the skill entry from `skills-lock.json` if present.
+- `frozen` skills are skipped unless `--force` is used.
+- `--dry-run` prints all planned actions without writing to disk.
+- `--all` requires `--scope` and removes every (non-frozen) skill in that scope.
 
 ## Supported Formats
 
