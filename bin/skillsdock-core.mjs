@@ -3845,6 +3845,181 @@ async function cmdDoctor(flags, context) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Source Parser – classify & parse skill sources (add-command prep)  */
+/* ------------------------------------------------------------------ */
+
+function _parseGitHubUrlPath(pathname, base) {
+  const parts = pathname.split('/');
+  if (parts.length < 2) return { ...base, type: 'github' };
+
+  const owner = parts[0];
+  const repo = parts[1];
+  let branch = null;
+  let subpath = null;
+
+  if (parts.length > 3 && parts[2] === 'tree') {
+    branch = parts[3];
+    if (parts.length > 4) {
+      subpath = sanitizeSubpath(parts.slice(4).join('/'));
+    }
+  }
+
+  return { ...base, type: 'github', owner, repo, branch, subpath };
+}
+
+function _parseGitLabUrlPath(pathname, base) {
+  const parts = pathname.split('/');
+
+  let pathParts, branch = null, subpath = null;
+
+  const dashIdx = parts.indexOf('-');
+  if (dashIdx !== -1 && parts[dashIdx + 1] === 'tree') {
+    pathParts = parts.slice(0, dashIdx);
+    if (parts.length > dashIdx + 2) branch = parts[dashIdx + 2];
+    if (parts.length > dashIdx + 3) {
+      subpath = sanitizeSubpath(parts.slice(dashIdx + 3).join('/'));
+    }
+  } else {
+    const treeIdx = parts.indexOf('tree');
+    if (treeIdx !== -1) {
+      pathParts = parts.slice(0, treeIdx);
+      if (parts.length > treeIdx + 1) branch = parts[treeIdx + 1];
+      if (parts.length > treeIdx + 2) {
+        subpath = sanitizeSubpath(parts.slice(treeIdx + 2).join('/'));
+      }
+    } else {
+      pathParts = parts;
+    }
+  }
+
+  if (pathParts.length < 2) return { ...base, type: 'gitlab' };
+
+  const owner = pathParts.slice(0, -1).join('/');
+  const repo = pathParts[pathParts.length - 1];
+
+  return { ...base, type: 'gitlab', owner, repo, branch, subpath };
+}
+
+function _parseShorthand(input, base, type) {
+  let skillFilter = null;
+  let ownerRepo = input;
+
+  const atIdx = input.indexOf('@');
+  if (atIdx !== -1) {
+    skillFilter = input.slice(atIdx + 1) || null;
+    ownerRepo = input.slice(0, atIdx);
+  }
+
+  ownerRepo = ownerRepo.replace(/\/$/, '').replace(/\.git$/, '');
+
+  const parts = ownerRepo.split('/');
+  if (parts.length < 2) {
+    return { ...base, type, owner: parts[0] || null, repo: null, skillFilter };
+  }
+
+  const owner = type === 'gitlab' ? parts.slice(0, -1).join('/') : parts[0];
+  const repo = parts[parts.length - 1];
+
+  return { ...base, type, owner, repo, skillFilter };
+}
+
+function sanitizeSubpath(subpath) {
+  if (subpath == null) return subpath;
+  const normalized = subpath.replace(/\\/g, '/');
+  for (const seg of normalized.split('/')) {
+    if (seg === '..') {
+      throw new Error(`Path traversal detected in subpath: "${subpath}"`);
+    }
+  }
+  return normalized;
+}
+
+function parseSource(raw) {
+  if (!raw || typeof raw !== 'string' || !raw.trim()) {
+    throw new Error('Source argument is required and must be a non-empty string');
+  }
+
+  const trimmed = raw.trim();
+  const base = {
+    type: null,
+    owner: null,
+    repo: null,
+    branch: null,
+    subpath: null,
+    skillFilter: null,
+    raw: trimmed,
+  };
+
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('./') || trimmed.startsWith('.\\') ||
+    trimmed.startsWith('../') || trimmed.startsWith('..\\') ||
+    trimmed === '.' || trimmed === '..' ||
+    /^[A-Za-z]:[\\\/]/.test(trimmed)
+  ) {
+    return { ...base, type: 'local' };
+  }
+
+  const sshMatch = trimmed.match(/^git@([^:]+):(.+?)(?:\.git)?\/?$/);
+  if (sshMatch) {
+    const host = sshMatch[1];
+    const pathPart = sshMatch[2];
+    const segments = pathPart.split('/');
+    const type = host.includes('gitlab') ? 'gitlab'
+      : host.includes('github') ? 'github'
+        : 'git-ssh';
+    if (segments.length >= 2) {
+      const owner = segments.slice(0, -1).join('/');
+      const repo = segments[segments.length - 1];
+      return { ...base, type, owner, repo };
+    }
+    return { ...base, type: 'git-ssh' };
+  }
+
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+    try {
+      const url = new URL(trimmed);
+      const hostname = url.hostname;
+      let pathname = url.pathname
+        .replace(/^\//, '')
+        .replace(/\/$/, '')
+        .replace(/\.git$/, '');
+
+      if (hostname.includes('github.com')) {
+        return _parseGitHubUrlPath(pathname, base);
+      }
+      if (hostname.includes('gitlab.com')) {
+        return _parseGitLabUrlPath(pathname, base);
+      }
+
+      const parts = pathname.split('/');
+      if (parts.length >= 2) {
+        return { ...base, type: 'git-ssh', owner: parts[0], repo: parts[1] };
+      }
+      return { ...base, type: 'git-ssh' };
+    } catch {
+      // malformed URL – fall through
+    }
+  }
+
+  const prefixMatch = trimmed.match(/^(github|gitlab):(.+)$/);
+  if (prefixMatch) {
+    return _parseShorthand(prefixMatch[2], base, prefixMatch[1]);
+  }
+
+  if (/^[^\s\/]+\/[^\s\/]+(@[^\s\/]+)?$/.test(trimmed)) {
+    return _parseShorthand(trimmed, base, 'github');
+  }
+
+  return { ...base, type: 'local' };
+}
+
+function getOwnerRepo(parsed) {
+  if (!parsed || !parsed.owner || !parsed.repo) return null;
+  return `${parsed.owner}/${parsed.repo}`;
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -3916,12 +4091,15 @@ export {
   buildCleanupPlan,
   convertContentToFormat,
   detectProjectRoot,
+  getOwnerRepo,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
+  parseSource,
   planSyncWriteMode,
   resolveSelectorMatches,
   resolveSyncTarget,
   resolveTemplatePath,
-  pickPreferredCanonicalPath
+  pickPreferredCanonicalPath,
+  sanitizeSubpath
 };

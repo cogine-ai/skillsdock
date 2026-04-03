@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
+- `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
+- `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
+- Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
+
 ## 0.2.0
 
 - Expanded the built-in agent registry from 8 presets to 42 curated agents.
