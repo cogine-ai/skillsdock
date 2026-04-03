@@ -8,6 +8,11 @@
 - `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
 - `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
 - Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
+- Added `scripts/sync-agent-docs.mjs` to auto-generate agent tables in `README.md` and `COMPATIBILITY.md` from `bin/agent-registry.json`.
+- Added `scripts/validate-agent-registry.mjs` to validate registry data integrity (required fields, duplicate IDs, path format, scope completeness).
+- Added `registry:sync` and `registry:validate` npm scripts.
+- Added CI steps to validate agent registry and detect docs drift on every push/PR.
+- Wrapped existing agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync.
 - Added project-level `skills-lock.json` for deterministic skill tracking:
   - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
   - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
