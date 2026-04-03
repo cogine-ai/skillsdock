@@ -3845,6 +3845,84 @@ async function cmdDoctor(flags, context) {
   }
 }
 
+// ── Project-level lockfile (skills-lock.json) ──────────────────────────
+
+const PROJECT_LOCKFILE_NAME = 'skills-lock.json';
+
+function emptyLockData() {
+  return { version: 1, skills: {} };
+}
+
+async function readProjectLockfile(projectRoot) {
+  const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+  try {
+    const raw = await fs.readFile(lockPath, 'utf8');
+    if (raw.includes('<<<<<<<')) {
+      console.warn(`[skillsdock] ${PROJECT_LOCKFILE_NAME} contains merge-conflict markers – treating as empty`);
+      return emptyLockData();
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return emptyLockData();
+    return { version: parsed.version ?? 1, skills: parsed.skills ?? {} };
+  } catch (err) {
+    if (err?.code === 'ENOENT') return emptyLockData();
+    console.warn(`[skillsdock] Could not read ${PROJECT_LOCKFILE_NAME}: ${err.message ?? err} – treating as empty`);
+    return emptyLockData();
+  }
+}
+
+async function writeProjectLockfile(projectRoot, lockData) {
+  const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+  const sorted = {};
+  for (const key of Object.keys(lockData.skills).sort()) {
+    sorted[key] = lockData.skills[key];
+  }
+  const output = JSON.stringify({ version: lockData.version ?? 1, skills: sorted }, null, 2) + '\n';
+  await fs.writeFile(lockPath, output, 'utf8');
+}
+
+async function computeSkillFolderHash(skillDirPath) {
+  const SKIP = new Set(['.git', 'node_modules']);
+  const entries = [];
+
+  async function walk(dir, rel) {
+    const items = await fs.readdir(dir, { withFileTypes: true });
+    for (const item of items) {
+      if (SKIP.has(item.name)) continue;
+      const full = path.join(dir, item.name);
+      const relPath = rel ? `${rel}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        await walk(full, relPath);
+      } else if (item.isFile()) {
+        entries.push(relPath);
+      }
+    }
+  }
+
+  await walk(skillDirPath, '');
+  entries.sort();
+
+  const hash = crypto.createHash('sha256');
+  for (const relPath of entries) {
+    const content = await fs.readFile(path.join(skillDirPath, relPath));
+    hash.update(relPath);
+    hash.update(content);
+  }
+  return hash.digest('hex');
+}
+
+async function updateLockfileEntry(projectRoot, skillName, entryData) {
+  const lockData = await readProjectLockfile(projectRoot);
+  lockData.skills[skillName] = entryData;
+  await writeProjectLockfile(projectRoot, lockData);
+}
+
+async function removeLockfileEntry(projectRoot, skillName) {
+  const lockData = await readProjectLockfile(projectRoot);
+  delete lockData.skills[skillName];
+  await writeProjectLockfile(projectRoot, lockData);
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -3914,14 +3992,19 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
+  computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
   planSyncWriteMode,
+  readProjectLockfile,
+  removeLockfileEntry,
   resolveSelectorMatches,
   resolveSyncTarget,
   resolveTemplatePath,
-  pickPreferredCanonicalPath
+  pickPreferredCanonicalPath,
+  updateLockfileEntry,
+  writeProjectLockfile
 };
