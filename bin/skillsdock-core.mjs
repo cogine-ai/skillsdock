@@ -629,6 +629,97 @@ async function readExternalSkillLock(homeDir = HOME) {
   return state;
 }
 
+function parseSource(raw) {
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('Source argument is required.');
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error('Source argument is required.');
+  }
+
+  if (trimmed.startsWith('./') || trimmed.startsWith('/') || trimmed.startsWith('../')) {
+    return { type: 'local', path: path.resolve(trimmed) };
+  }
+
+  const githubUrlMatch = trimmed.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/tree\/([^/]+)(?:\/(.+))?)?$/
+  );
+  if (githubUrlMatch) {
+    const [, owner, repo, branch, subpath] = githubUrlMatch;
+    return {
+      type: 'github',
+      owner,
+      repo,
+      branch: branch || null,
+      subpath: subpath || null,
+      skillFilter: null,
+      url: trimmed
+    };
+  }
+
+  const gitlabUrlMatch = trimmed.match(
+    /^https?:\/\/gitlab\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/-\/tree\/([^/]+)(?:\/(.+))?)?$/
+  );
+  if (gitlabUrlMatch) {
+    const [, owner, repo, branch, subpath] = gitlabUrlMatch;
+    return {
+      type: 'gitlab',
+      owner,
+      repo,
+      branch: branch || null,
+      subpath: subpath || null,
+      skillFilter: null,
+      url: trimmed
+    };
+  }
+
+  const shorthandMatch = trimmed.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:@(.+))?$/);
+  if (shorthandMatch) {
+    const [, owner, repo, skillFilter] = shorthandMatch;
+    return {
+      type: 'github',
+      owner,
+      repo,
+      branch: null,
+      subpath: null,
+      skillFilter: skillFilter || null,
+      url: `https://github.com/${owner}/${repo}`
+    };
+  }
+
+  throw new Error(
+    `Cannot parse source "${trimmed}". Expected owner/repo, owner/repo@skill, a GitHub/GitLab URL, or a local path (./path).`
+  );
+}
+
+async function writeExternalSkillLock(lockPath, entries) {
+  const skills = {};
+  for (const entry of entries) {
+    skills[entry.skillName] = {
+      source: entry.source || null,
+      sourceType: entry.sourceType || null,
+      sourceUrl: entry.sourceUrl || null,
+      skillPath: entry.skillPath || null,
+      skillFolderHash: entry.skillFolderHash || null,
+      installedAt: entry.installedAt || null,
+      updatedAt: entry.updatedAt || null,
+      pluginName: entry.pluginName || null
+    };
+  }
+  const data = {
+    version: EXTERNAL_SKILL_LOCK_VERSION,
+    skills
+  };
+  await ensureParentDir(lockPath);
+  await writeJson(lockPath, data);
+}
+
+async function computeSkillFolderHash(skillDir) {
+  const manifest = await buildDirectoryManifest(skillDir, path.join(skillDir, 'SKILL.md'));
+  return manifest.manifestHash;
+}
+
 function resolveExternalSkillMetadataForFile(filePath, skillId, lockState, homeDir = HOME) {
   if (!lockState || !lockState.healthy) return normalizeExternalSkillMetadata(null);
 
@@ -1873,6 +1964,7 @@ Usage:
   skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
   skillsdock inspect <id|key|path> [--registry <path>] [--json]
   skillsdock sync --to <agent|target> --scope <user|project> [--registry <path>] [--config <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+  skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
   skillsdock version
 
@@ -1885,6 +1977,9 @@ Examples:
   skillsdock cleanup --plan
   skillsdock list --changed
   skillsdock sync --to openclaw --scope user --dry-run
+  skillsdock add owner/repo --scope user
+  skillsdock add owner/repo@skill-name --dry-run
+  skillsdock add ./path/to/skills --scope project
 `);
 }
 
@@ -3845,6 +3940,450 @@ async function cmdDoctor(flags, context) {
   }
 }
 
+async function discoverSkillMdFiles(rootDir) {
+  const results = [];
+  const candidateDirs = ['', 'skills', '.agents/skills'];
+
+  for (const rel of candidateDirs) {
+    const searchDir = rel ? path.join(rootDir, rel) : rootDir;
+    if (!(await pathExists(searchDir))) continue;
+    await walkForSkillMd(searchDir, results, rootDir);
+  }
+
+  const seen = new Set();
+  return results.filter((entry) => {
+    if (seen.has(entry.skillPath)) return false;
+    seen.add(entry.skillPath);
+    return true;
+  });
+}
+
+async function walkForSkillMd(dir, results, rootDir, depth = 0) {
+  if (depth > DEFAULT_SCAN.maxDepth) return;
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (DEFAULT_SCAN.ignoreDirs.includes(entry.name)) continue;
+      await walkForSkillMd(fullPath, results, rootDir, depth + 1);
+      continue;
+    }
+    if (entry.isFile() && entry.name.toUpperCase() === 'SKILL.MD') {
+      const skillDir = path.dirname(fullPath);
+      const skillName = path.basename(skillDir);
+      results.push({
+        skillPath: fullPath,
+        skillDir,
+        skillName,
+        relativePath: path.relative(rootDir, fullPath)
+      });
+    }
+  }
+}
+
+async function cloneGitRepo(source, tmpDir) {
+  const repoUrl = source.url.endsWith('.git') ? source.url : `${source.url}.git`;
+  const cloneDir = path.join(tmpDir, 'repo');
+
+  const cloneArgs = ['clone', '--depth', '1', '--single-branch'];
+  if (source.branch) {
+    cloneArgs.push('--branch', source.branch);
+  }
+  cloneArgs.push(repoUrl, cloneDir);
+
+  const result = spawnSync('git', cloneArgs, {
+    encoding: 'utf8',
+    timeout: 60000
+  });
+
+  if (result.status !== 0) {
+    const stderr = (result.stderr || '').trim();
+    throw new Error(`git clone failed: ${stderr || 'unknown error'}`);
+  }
+
+  if (source.subpath) {
+    const subDir = path.join(cloneDir, source.subpath);
+    if (!(await pathExists(subDir))) {
+      throw new Error(`Subpath "${source.subpath}" not found in cloned repository.`);
+    }
+    return subDir;
+  }
+
+  return cloneDir;
+}
+
+async function installSkillToTarget(skillEntry, targetBaseDir, options = {}) {
+  const { dryRun = false, useCopy = false } = options;
+  const destDir = path.join(targetBaseDir, skillEntry.skillName);
+  const destSkillMd = path.join(destDir, 'SKILL.md');
+
+  if (dryRun) {
+    return { installed: true, destDir, destSkillMd, action: 'copy' };
+  }
+
+  await fs.mkdir(destDir, { recursive: true });
+
+  const sourceDir = skillEntry.skillDir;
+  let entries;
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+
+  for (const entry of entries) {
+    const srcPath = path.join(sourceDir, entry.name);
+    const dstPath = path.join(destDir, entry.name);
+    if (entry.isFile()) {
+      const content = await fs.readFile(srcPath);
+      await writeFileAtomic(dstPath, content);
+    } else if (entry.isDirectory() && !DEFAULT_SCAN.ignoreDirs.includes(entry.name)) {
+      await copyDirRecursive(srcPath, dstPath);
+    }
+  }
+
+  return { installed: true, destDir, destSkillMd, action: 'copy' };
+}
+
+async function copyDirRecursive(src, dest) {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dest, entry.name);
+    if (entry.isFile()) {
+      const content = await fs.readFile(srcPath);
+      await writeFileAtomic(dstPath, content);
+    } else if (entry.isDirectory()) {
+      await copyDirRecursive(srcPath, dstPath);
+    }
+  }
+}
+
+async function createAgentSymlinks(skillName, canonicalDir, scope, options = {}) {
+  const { dryRun = false, useCopy = false } = options;
+  if (useCopy) return [];
+
+  const canonicalSkillDir = path.join(canonicalDir, skillName);
+  const links = [];
+
+  for (const agent of AGENT_REGISTRY.agents) {
+    if (agent.installFamily === 'universal') continue;
+    const scopeCfg = agent.scopes?.[scope];
+    if (!scopeCfg) continue;
+    const targetFormat = normalizeTargetFormat(
+      scopeCfg.target?.format || scopeCfg.source?.format,
+      scopeCfg.target?.path || scopeCfg.source?.path || ''
+    );
+    if (targetFormat !== 'skill-md') continue;
+
+    const agentSkillsDir = scopeCfg.target?.path || scopeCfg.source?.path;
+    if (!agentSkillsDir) continue;
+    const resolvedAgentDir = resolveTemplatePath(agentSkillsDir, options);
+    if (!resolvedAgentDir) continue;
+
+    const agentDestDir = path.join(resolvedAgentDir, skillName);
+    if (dryRun) {
+      links.push({ agent: agent.id, path: agentDestDir, action: 'symlink' });
+      continue;
+    }
+
+    try {
+      await fs.mkdir(path.dirname(agentDestDir), { recursive: true });
+      await removePathIfExists(agentDestDir);
+      const relTarget = path.relative(path.dirname(agentDestDir), canonicalSkillDir);
+      await fs.symlink(relTarget, agentDestDir);
+      links.push({ agent: agent.id, path: agentDestDir, action: 'symlink' });
+    } catch {
+      // Non-fatal: agent symlink creation is best-effort
+    }
+  }
+
+  return links;
+}
+
+async function removePathIfExists(filePath) {
+  try {
+    const stat = await fs.lstat(filePath);
+    if (stat.isSymbolicLink() || stat.isFile()) {
+      await fs.unlink(filePath);
+    } else if (stat.isDirectory()) {
+      await fs.rm(filePath, { recursive: true });
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
+async function cmdAdd(flags, args, context) {
+  const sourceArg = args[0];
+  if (!sourceArg || typeof sourceArg !== 'string') {
+    throw makeCliError('Usage: skillsdock add <source> [--scope user|project] [--dry-run] [--copy]');
+  }
+
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'user';
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw makeCliError(`Invalid --scope "${scope}". Use --scope user|project.`);
+  }
+
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const useCopy = Boolean(flags.copy);
+  const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
+
+  const source = parseSource(sourceArg);
+
+  const targetBaseDir =
+    scope === 'project'
+      ? path.join(projectRoot, UNIVERSAL_CANONICAL_DIR)
+      : path.resolve(expandHomePath(`~/${UNIVERSAL_CANONICAL_DIR}`, homeDir));
+
+  let tmpDir = null;
+  const installed = [];
+
+  try {
+    let searchRoot;
+
+    if (source.type === 'local') {
+      if (!(await pathExists(source.path))) {
+        throw makeCliError(`Local path does not exist: ${source.path}`);
+      }
+      searchRoot = source.path;
+    } else {
+      tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'skillsdock-add-'));
+      searchRoot = await cloneGitRepo(source, tmpDir);
+    }
+
+    const skills = await discoverSkillMdFiles(searchRoot);
+
+    if (skills.length === 0) {
+      throw makeCliError(`No SKILL.md files found in ${sourceArg}.`);
+    }
+
+    const filtered = source.skillFilter
+      ? skills.filter(
+          (s) => s.skillName === source.skillFilter || s.skillName === slugify(source.skillFilter)
+        )
+      : skills;
+
+    if (filtered.length === 0) {
+      const available = skills.map((s) => s.skillName).join(', ');
+      throw makeCliError(
+        `Skill "${source.skillFilter}" not found. Available skills: ${available}`
+      );
+    }
+
+    for (const skillEntry of filtered) {
+      try {
+        parseContentForFormat('skill-md', await fs.readFile(skillEntry.skillPath, 'utf8'), skillEntry.skillPath);
+      } catch (error) {
+        console.log(`WARN: Skipping ${skillEntry.skillName}: ${error.message}`);
+        continue;
+      }
+
+      if (dryRun) {
+        const destDir = path.join(targetBaseDir, skillEntry.skillName);
+        console.log(`[dry-run] Would install ${skillEntry.skillName} -> ${destDir}`);
+        installed.push({
+          skillName: skillEntry.skillName,
+          destDir,
+          action: 'copy',
+          links: []
+        });
+        continue;
+      }
+
+      const result = await installSkillToTarget(skillEntry, targetBaseDir, { dryRun, useCopy });
+
+      const links = useCopy
+        ? []
+        : await createAgentSymlinks(skillEntry.skillName, targetBaseDir, scope, {
+            dryRun,
+            useCopy,
+            projectRoot,
+            homeDir
+          });
+
+      installed.push({
+        skillName: skillEntry.skillName,
+        destDir: result.destDir,
+        action: result.action,
+        links
+      });
+    }
+
+    if (installed.length === 0) {
+      console.log('No skills were installed.');
+      return;
+    }
+
+    if (!dryRun && scope === 'user') {
+      const lockPath = getExternalSkillLockPath(homeDir);
+      const existingLock = await readExternalSkillLock(homeDir);
+      const lockEntries = [];
+
+      if (existingLock.healthy) {
+        for (const [name, entry] of existingLock.entriesByName) {
+          lockEntries.push(entry);
+        }
+      }
+
+      for (const item of installed) {
+        const existing = lockEntries.find((e) => e.skillName === item.skillName);
+        const now = new Date().toISOString();
+        let folderHash = null;
+        try {
+          folderHash = await computeSkillFolderHash(item.destDir);
+        } catch {
+          // Non-fatal
+        }
+
+        const entry = {
+          skillName: item.skillName,
+          source: sourceArg,
+          sourceType: source.type,
+          sourceUrl: source.url || null,
+          skillPath: `${item.skillName}/SKILL.md`,
+          skillFolderHash: folderHash,
+          installedAt: existing?.installedAt || now,
+          updatedAt: now,
+          pluginName: null
+        };
+
+        const idx = lockEntries.findIndex((e) => e.skillName === item.skillName);
+        if (idx >= 0) {
+          lockEntries[idx] = entry;
+        } else {
+          lockEntries.push(entry);
+        }
+      }
+
+      await writeExternalSkillLock(lockPath, lockEntries);
+    }
+
+    if (!dryRun && scope === 'project') {
+      const lockDir = path.join(projectRoot, '.agents');
+      const lockPath = path.join(lockDir, EXTERNAL_SKILL_LOCK_FILE);
+
+      let existingEntries = [];
+      try {
+        const raw = await fs.readFile(lockPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed?.skills && typeof parsed.skills === 'object') {
+          for (const [name, entry] of Object.entries(parsed.skills)) {
+            existingEntries.push(mapExternalSkillLockEntry(name, entry));
+          }
+        }
+      } catch {
+        // No existing lockfile
+      }
+
+      for (const item of installed) {
+        const now = new Date().toISOString();
+        let folderHash = null;
+        try {
+          folderHash = await computeSkillFolderHash(item.destDir);
+        } catch {
+          // Non-fatal
+        }
+
+        const entry = {
+          skillName: item.skillName,
+          source: sourceArg,
+          sourceType: source.type,
+          sourceUrl: source.url || null,
+          skillPath: `${item.skillName}/SKILL.md`,
+          skillFolderHash: folderHash,
+          installedAt:
+            existingEntries.find((e) => e?.skillName === item.skillName)?.installedAt || now,
+          updatedAt: now,
+          pluginName: null
+        };
+
+        const idx = existingEntries.findIndex((e) => e?.skillName === item.skillName);
+        if (idx >= 0) {
+          existingEntries[idx] = entry;
+        } else {
+          existingEntries.push(entry);
+        }
+      }
+
+      await writeExternalSkillLock(lockPath, existingEntries);
+    }
+
+    if (!dryRun) {
+      const { registryPath, registry } = await loadRegistry(flags.registry);
+      const now = new Date().toISOString();
+      for (const item of installed) {
+        const skillMdPath = path.join(item.destDir, 'SKILL.md');
+        const raw = await fs.readFile(skillMdPath, 'utf8');
+        const { metadata, normalized } = parseContentForFormat('skill-md', raw, skillMdPath);
+        const manifest = await buildStructureManifest(skillMdPath, 'skill-md');
+        const canonicalPath = normalizePath(skillMdPath);
+        const key = makeCanonicalKey(canonicalPath);
+
+        const registryItem = makeRegistryItemFromUnknown(
+          {
+            key,
+            canonicalPath,
+            realPath: canonicalPath,
+            sourcePath: canonicalPath,
+            id: item.skillName,
+            name: normalized.name,
+            description: normalized.description,
+            normalized,
+            metadata,
+            hash: manifest.manifestHash,
+            manifestHash: manifest.manifestHash,
+            structureManifest: manifest,
+            state: 'active',
+            createdAt: now,
+            updatedAt: now,
+            firstSeenAt: now,
+            lastSeenAt: now,
+            externalSource: sourceArg,
+            externalSourceType: source.type,
+            externalSourceUrl: source.url || null
+          },
+          ''
+        );
+        registry.items[key] = registryItem;
+      }
+
+      registry.updatedAt = now;
+      rebuildRegistryIndexes(registry);
+      await writeJson(registryPath, registry);
+    }
+
+    if (dryRun) {
+      console.log(`\nDry run complete. ${installed.length} skill(s) would be installed to ${targetBaseDir}`);
+    } else {
+      console.log(`\nInstalled ${installed.length} skill(s) to ${targetBaseDir}:`);
+      for (const item of installed) {
+        console.log(`  - ${item.skillName} -> ${item.destDir}`);
+        for (const link of item.links) {
+          console.log(`    symlink: ${link.agent} -> ${link.path}`);
+        }
+      }
+    }
+  } finally {
+    if (tmpDir) {
+      try {
+        fsSync.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+  }
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -3900,6 +4439,10 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     await cmdSync(flags, context);
     return;
   }
+  if (command === 'add') {
+    await cmdAdd(flags, args, context);
+    return;
+  }
   if (command === 'doctor') {
     await cmdDoctor(flags, context);
     return;
@@ -3914,14 +4457,17 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
+  computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
+  parseSource,
   planSyncWriteMode,
   resolveSelectorMatches,
   resolveSyncTarget,
   resolveTemplatePath,
-  pickPreferredCanonicalPath
+  pickPreferredCanonicalPath,
+  writeExternalSkillLock
 };
