@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Added project-level `skills-lock.json` for deterministic skill tracking:
+  - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
+  - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
+  - `computeSkillFolderHash(skillDirPath)` — SHA-256 hash of a skill directory (path-aware, skips `.git`/`node_modules`)
+  - `updateLockfileEntry(projectRoot, skillName, entryData)` — upsert a single skill entry
+  - `removeLockfileEntry(projectRoot, skillName)` — remove a single skill entry
+- No timestamp fields in `skills-lock.json` to minimize git merge conflicts
+- Lockfile location: `${projectRoot}/skills-lock.json`
+
 ## 0.2.0
 
 - Expanded the built-in agent registry from 8 presets to 42 curated agents.
