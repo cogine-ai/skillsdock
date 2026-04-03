@@ -8,6 +8,14 @@
 - `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
 - `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
 - Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
+- Added project-level `skills-lock.json` for deterministic skill tracking:
+  - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
+  - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
+  - `computeSkillFolderHash(skillDirPath)` — SHA-256 hash of a skill directory (path-aware, skips `.git`/`node_modules`)
+  - `updateLockfileEntry(projectRoot, skillName, entryData)` — upsert a single skill entry
+  - `removeLockfileEntry(projectRoot, skillName)` — remove a single skill entry
+- No timestamp fields in `skills-lock.json` to minimize git merge conflicts
+- Lockfile location: `${projectRoot}/skills-lock.json`
 
 ## 0.2.0
 
