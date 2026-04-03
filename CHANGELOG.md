@@ -7,6 +7,14 @@
 - Added `registry:sync` and `registry:validate` npm scripts.
 - Added CI steps to validate agent registry and detect docs drift on every push/PR.
 - Wrapped existing agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync.
+- Added project-level `skills-lock.json` for deterministic skill tracking:
+  - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
+  - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
+  - `computeSkillFolderHash(skillDirPath)` — SHA-256 hash of a skill directory (path-aware, skips `.git`/`node_modules`)
+  - `updateLockfileEntry(projectRoot, skillName, entryData)` — upsert a single skill entry
+  - `removeLockfileEntry(projectRoot, skillName)` — remove a single skill entry
+- No timestamp fields in `skills-lock.json` to minimize git merge conflicts
+- Lockfile location: `${projectRoot}/skills-lock.json`
 
 ## 0.2.0
 
