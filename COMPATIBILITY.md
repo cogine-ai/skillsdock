@@ -4,61 +4,67 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
 
 ## Agent Path Matrix
 
-<!-- COMPAT-MATRIX-START -->
-| Agent | Display Name | Family | Canonical Dir | User Scope Source/Target | Project Scope Source/Target | Target Format |
-|---|---|---|---|---|---|---|
-| openclaw | OpenClaw | dedicated | `skills` | `~/.openclaw/skills` | `${projectRoot}/skills` | `openclaw-md` |
-| codex | Codex | universal | `.agents/skills` | `~/.codex/skills` | `${projectRoot}/.codex/skills` | `skill-md` |
-| claude | Claude | dedicated | `.claude/skills` | `~/.claude/skills` | `${projectRoot}/.claude/skills` | `skill-md` |
-| cursor | Cursor | universal | `.agents/skills` | `~/.cursor/rules` | `${projectRoot}/.cursor/rules` | `mdc` |
-| cline | Cline | universal | `.agents/skills` | `~/.cline/rules` | `${projectRoot}/.cline/rules` | `mdc` |
-| codebuddy | CodeBuddy | dedicated | `.codebuddy/skills` | `~/.codebuddy/skills` | `${projectRoot}/.codebuddy/skills` | `skill-md` |
-| trae | Trae | dedicated | `.trae/skills` | `~/.trae/skills` | `${projectRoot}/.trae/skills` | `skill-md` |
-| opencode | OpenCode | universal | `.agents/skills` | `~/.opencode/skills` | `${projectRoot}/.opencode/skills` | `opencode-md` |
-| amp | Amp | universal | `.agents/skills` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| antigravity | Antigravity | universal | `.agents/skills` | `~/.gemini/antigravity/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| augment | Augment | dedicated | `.augment/skills` | `~/.augment/skills` | `${projectRoot}/.augment/skills` | `skill-md` |
-| command-code | Command Code | dedicated | `.commandcode/skills` | `~/.commandcode/skills` | `${projectRoot}/.commandcode/skills` | `skill-md` |
-| continue | Continue | dedicated | `.continue/skills` | `~/.continue/skills` | `${projectRoot}/.continue/skills` | `skill-md` |
-| cortex | Cortex Code | dedicated | `.cortex/skills` | `~/.snowflake/cortex/skills` | `${projectRoot}/.cortex/skills` | `skill-md` |
-| crush | Crush | dedicated | `.crush/skills` | `~/.config/crush/skills` | `${projectRoot}/.crush/skills` | `skill-md` |
-| deepagents | Deep Agents | universal | `.agents/skills` | `~/.deepagents/agent/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| droid | Droid | dedicated | `.factory/skills` | `~/.factory/skills` | `${projectRoot}/.factory/skills` | `skill-md` |
-| gemini-cli | Gemini CLI | universal | `.agents/skills` | `~/.gemini/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| github-copilot | GitHub Copilot | universal | `.agents/skills` | `~/.copilot/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| goose | Goose | dedicated | `.goose/skills` | `~/.config/goose/skills` | `${projectRoot}/.goose/skills` | `skill-md` |
-| junie | Junie | dedicated | `.junie/skills` | `~/.junie/skills` | `${projectRoot}/.junie/skills` | `skill-md` |
-| iflow-cli | iFlow CLI | dedicated | `.iflow/skills` | `~/.iflow/skills` | `${projectRoot}/.iflow/skills` | `skill-md` |
-| kilo | Kilo Code | dedicated | `.kilocode/skills` | `~/.kilocode/skills` | `${projectRoot}/.kilocode/skills` | `skill-md` |
-| kimi-cli | Kimi Code CLI | universal | `.agents/skills` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| kiro-cli | Kiro CLI | dedicated | `.kiro/skills` | `~/.kiro/skills` | `${projectRoot}/.kiro/skills` | `skill-md` |
-| kode | Kode | dedicated | `.kode/skills` | `~/.kode/skills` | `${projectRoot}/.kode/skills` | `skill-md` |
-| mcpjam | MCPJam | dedicated | `.mcpjam/skills` | `~/.mcpjam/skills` | `${projectRoot}/.mcpjam/skills` | `skill-md` |
-| mistral-vibe | Mistral Vibe | dedicated | `.vibe/skills` | `~/.vibe/skills` | `${projectRoot}/.vibe/skills` | `skill-md` |
-| mux | Mux | dedicated | `.mux/skills` | `~/.mux/skills` | `${projectRoot}/.mux/skills` | `skill-md` |
-| neovate | Neovate | dedicated | `.neovate/skills` | `~/.neovate/skills` | `${projectRoot}/.neovate/skills` | `skill-md` |
-| openhands | OpenHands | dedicated | `.openhands/skills` | `~/.openhands/skills` | `${projectRoot}/.openhands/skills` | `skill-md` |
-| pi | Pi | dedicated | `.pi/skills` | `~/.pi/agent/skills` | `${projectRoot}/.pi/skills` | `skill-md` |
-| qoder | Qoder | dedicated | `.qoder/skills` | `~/.qoder/skills` | `${projectRoot}/.qoder/skills` | `skill-md` |
-| qwen-code | Qwen Code | dedicated | `.qwen/skills` | `~/.qwen/skills` | `${projectRoot}/.qwen/skills` | `skill-md` |
-| replit | Replit | universal | `.agents/skills` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| roo | Roo Code | dedicated | `.roo/skills` | `~/.roo/skills` | `${projectRoot}/.roo/skills` | `skill-md` |
-| trae-cn | Trae CN | dedicated | `.trae-cn/skills` | `~/.trae-cn/skills` | `${projectRoot}/.trae-cn/skills` | `skill-md` |
-| warp | Warp | universal | `.agents/skills` | `~/.agents/skills` | `${projectRoot}/.agents/skills` | `skill-md` |
-| windsurf | Windsurf | dedicated | `.windsurf/skills` | `~/.codeium/windsurf/skills` | `${projectRoot}/.windsurf/skills` | `skill-md` |
-| zencoder | Zencoder | dedicated | `.zencoder/skills` | `~/.zencoder/skills` | `${projectRoot}/.zencoder/skills` | `skill-md` |
-| pochi | Pochi | dedicated | `.pochi/skills` | `~/.pochi/skills` | `${projectRoot}/.pochi/skills` | `skill-md` |
-| adal | AdaL | dedicated | `.adal/skills` | `~/.adal/skills` | `${projectRoot}/.adal/skills` | `skill-md` |
-<!-- COMPAT-MATRIX-END -->
+
+
+
+| Agent          | Display Name   | Family    | Canonical Dir         | User Scope Source/Target       | Project Scope Source/Target          | Target Format |
+| -------------- | -------------- | --------- | --------------------- | ------------------------------ | ------------------------------------ | ------------- |
+| openclaw       | OpenClaw       | dedicated | `skills`              | `~/.openclaw/skills`           | `${projectRoot}/skills`              | `openclaw-md` |
+| codex          | Codex          | universal | `.agents/skills`      | `~/.codex/skills`              | `${projectRoot}/.codex/skills`       | `skill-md`    |
+| claude         | Claude         | dedicated | `.claude/skills`      | `~/.claude/skills`             | `${projectRoot}/.claude/skills`      | `skill-md`    |
+| cursor         | Cursor         | universal | `.agents/skills`      | `~/.cursor/rules`              | `${projectRoot}/.cursor/rules`       | `mdc`         |
+| cline          | Cline          | universal | `.agents/skills`      | `~/.cline/rules`               | `${projectRoot}/.cline/rules`        | `mdc`         |
+| codebuddy      | CodeBuddy      | dedicated | `.codebuddy/skills`   | `~/.codebuddy/skills`          | `${projectRoot}/.codebuddy/skills`   | `skill-md`    |
+| trae           | Trae           | dedicated | `.trae/skills`        | `~/.trae/skills`               | `${projectRoot}/.trae/skills`        | `skill-md`    |
+| opencode       | OpenCode       | universal | `.agents/skills`      | `~/.opencode/skills`           | `${projectRoot}/.opencode/skills`    | `opencode-md` |
+| amp            | Amp            | universal | `.agents/skills`      | `~/.config/agents/skills`      | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| antigravity    | Antigravity    | universal | `.agents/skills`      | `~/.gemini/antigravity/skills` | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| augment        | Augment        | dedicated | `.augment/skills`     | `~/.augment/skills`            | `${projectRoot}/.augment/skills`     | `skill-md`    |
+| command-code   | Command Code   | dedicated | `.commandcode/skills` | `~/.commandcode/skills`        | `${projectRoot}/.commandcode/skills` | `skill-md`    |
+| continue       | Continue       | dedicated | `.continue/skills`    | `~/.continue/skills`           | `${projectRoot}/.continue/skills`    | `skill-md`    |
+| cortex         | Cortex Code    | dedicated | `.cortex/skills`      | `~/.snowflake/cortex/skills`   | `${projectRoot}/.cortex/skills`      | `skill-md`    |
+| crush          | Crush          | dedicated | `.crush/skills`       | `~/.config/crush/skills`       | `${projectRoot}/.crush/skills`       | `skill-md`    |
+| deepagents     | Deep Agents    | universal | `.agents/skills`      | `~/.deepagents/agent/skills`   | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| droid          | Droid          | dedicated | `.factory/skills`     | `~/.factory/skills`            | `${projectRoot}/.factory/skills`     | `skill-md`    |
+| gemini-cli     | Gemini CLI     | universal | `.agents/skills`      | `~/.gemini/skills`             | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| github-copilot | GitHub Copilot | universal | `.agents/skills`      | `~/.copilot/skills`            | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| goose          | Goose          | dedicated | `.goose/skills`       | `~/.config/goose/skills`       | `${projectRoot}/.goose/skills`       | `skill-md`    |
+| junie          | Junie          | dedicated | `.junie/skills`       | `~/.junie/skills`              | `${projectRoot}/.junie/skills`       | `skill-md`    |
+| iflow-cli      | iFlow CLI      | dedicated | `.iflow/skills`       | `~/.iflow/skills`              | `${projectRoot}/.iflow/skills`       | `skill-md`    |
+| kilo           | Kilo Code      | dedicated | `.kilocode/skills`    | `~/.kilocode/skills`           | `${projectRoot}/.kilocode/skills`    | `skill-md`    |
+| kimi-cli       | Kimi Code CLI  | universal | `.agents/skills`      | `~/.config/agents/skills`      | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| kiro-cli       | Kiro CLI       | dedicated | `.kiro/skills`        | `~/.kiro/skills`               | `${projectRoot}/.kiro/skills`        | `skill-md`    |
+| kode           | Kode           | dedicated | `.kode/skills`        | `~/.kode/skills`               | `${projectRoot}/.kode/skills`        | `skill-md`    |
+| mcpjam         | MCPJam         | dedicated | `.mcpjam/skills`      | `~/.mcpjam/skills`             | `${projectRoot}/.mcpjam/skills`      | `skill-md`    |
+| mistral-vibe   | Mistral Vibe   | dedicated | `.vibe/skills`        | `~/.vibe/skills`               | `${projectRoot}/.vibe/skills`        | `skill-md`    |
+| mux            | Mux            | dedicated | `.mux/skills`         | `~/.mux/skills`                | `${projectRoot}/.mux/skills`         | `skill-md`    |
+| neovate        | Neovate        | dedicated | `.neovate/skills`     | `~/.neovate/skills`            | `${projectRoot}/.neovate/skills`     | `skill-md`    |
+| openhands      | OpenHands      | dedicated | `.openhands/skills`   | `~/.openhands/skills`          | `${projectRoot}/.openhands/skills`   | `skill-md`    |
+| pi             | Pi             | dedicated | `.pi/skills`          | `~/.pi/agent/skills`           | `${projectRoot}/.pi/skills`          | `skill-md`    |
+| qoder          | Qoder          | dedicated | `.qoder/skills`       | `~/.qoder/skills`              | `${projectRoot}/.qoder/skills`       | `skill-md`    |
+| qwen-code      | Qwen Code      | dedicated | `.qwen/skills`        | `~/.qwen/skills`               | `${projectRoot}/.qwen/skills`        | `skill-md`    |
+| replit         | Replit         | universal | `.agents/skills`      | `~/.config/agents/skills`      | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| roo            | Roo Code       | dedicated | `.roo/skills`         | `~/.roo/skills`                | `${projectRoot}/.roo/skills`         | `skill-md`    |
+| trae-cn        | Trae CN        | dedicated | `.trae-cn/skills`     | `~/.trae-cn/skills`            | `${projectRoot}/.trae-cn/skills`     | `skill-md`    |
+| warp           | Warp           | universal | `.agents/skills`      | `~/.agents/skills`             | `${projectRoot}/.agents/skills`      | `skill-md`    |
+| windsurf       | Windsurf       | dedicated | `.windsurf/skills`    | `~/.codeium/windsurf/skills`   | `${projectRoot}/.windsurf/skills`    | `skill-md`    |
+| zencoder       | Zencoder       | dedicated | `.zencoder/skills`    | `~/.zencoder/skills`           | `${projectRoot}/.zencoder/skills`    | `skill-md`    |
+| pochi          | Pochi          | dedicated | `.pochi/skills`       | `~/.pochi/skills`              | `${projectRoot}/.pochi/skills`       | `skill-md`    |
+| adal           | AdaL           | dedicated | `.adal/skills`        | `~/.adal/skills`               | `${projectRoot}/.adal/skills`        | `skill-md`    |
+
+
+
 
 ## Source Format Mapping
 
-| Source Format | Scanned Files |
-|---|---|
-| `skill-md` | `SKILL.md`, `.skill` |
-| `mdc` | `*.mdc` |
-| `openclaw-md` | `*.md` |
-| `opencode-md` | `*.md` |
+
+| Source Format | Scanned Files        |
+| ------------- | -------------------- |
+| `skill-md`    | `SKILL.md`, `.skill` |
+| `mdc`         | `*.mdc`              |
+| `openclaw-md` | `*.md`               |
+| `opencode-md` | `*.md`               |
+
 
 ## `skill-md` Compatibility Notes
 
