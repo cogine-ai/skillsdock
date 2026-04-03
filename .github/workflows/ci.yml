@@ -41,3 +41,6 @@ jobs:
 
       - name: Run test suite
         run: npm test
+
+      - name: Verify package packability
+        run: npm run pack:check

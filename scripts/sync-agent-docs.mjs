@@ -13,6 +13,9 @@ const compatPath = resolve(ROOT, 'COMPATIBILITY.md');
 
 const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
 const agents = registry.agents;
+if (!Array.isArray(agents)) {
+  throw new Error('Invalid registry: "agents" must be an array');
+}
 
 function buildReadmeTable(agents) {
   const header = [
@@ -44,9 +47,13 @@ function buildCompatTable(agents) {
 
 function replaceSection(content, startMarker, endMarker, replacement) {
   const startIdx = content.indexOf(startMarker);
-  const endIdx = content.indexOf(endMarker);
-  if (startIdx === -1 || endIdx === -1) {
-    throw new Error(`Markers not found: ${startMarker} / ${endMarker}`);
+  if (startIdx === -1) {
+    throw new Error(`Start marker not found: ${startMarker}`);
+  }
+  const searchFrom = startIdx + startMarker.length;
+  const endIdx = content.indexOf(endMarker, searchFrom);
+  if (endIdx === -1) {
+    throw new Error(`End marker not found: ${endMarker}`);
   }
   const before = content.slice(0, startIdx + startMarker.length);
   const after = content.slice(endIdx);

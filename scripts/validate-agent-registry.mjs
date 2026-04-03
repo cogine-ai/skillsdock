@@ -11,9 +11,14 @@ const registryPath = resolve(ROOT, 'bin/agent-registry.json');
 const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
 const agents = registry.agents;
 
+if (!Array.isArray(agents)) {
+  console.error('Agent registry validation failed: "agents" must be an array.');
+  process.exit(1);
+}
+
 const errors = [];
 
-const REQUIRED_FIELDS = ['id', 'installFamily', 'scopes'];
+const REQUIRED_FIELDS = ['id', 'displayName', 'installFamily', 'scopes'];
 
 const seenIds = new Set();
 
@@ -34,22 +39,27 @@ for (let i = 0; i < agents.length; i++) {
     seenIds.add(agent.id);
   }
 
-  if (agent.scopes && typeof agent.scopes === 'object') {
-    for (const [scopeName, scope] of Object.entries(agent.scopes)) {
-      if (!scope.source) {
-        errors.push(`[${label}] scope "${scopeName}" missing "source"`);
-      }
-      if (!scope.target) {
-        errors.push(`[${label}] scope "${scopeName}" missing "target"`);
-      }
+  if (agent.scopes == null || typeof agent.scopes !== 'object' || Array.isArray(agent.scopes)) {
+    errors.push(`[${label}] "scopes" must be a plain object`);
+    continue;
+  }
 
-      for (const part of ['source', 'target']) {
-        const pathVal = scope?.[part]?.path;
-        if (pathVal != null && typeof pathVal === 'string') {
-          if (!pathVal.startsWith('~') && !pathVal.startsWith('.') && !pathVal.startsWith('${projectRoot}')) {
-            errors.push(`[${label}] scope "${scopeName}" ${part}.path "${pathVal}" does not start with "~", ".", or "\${projectRoot}"`);
-          }
-        }
+  for (const [scopeName, scope] of Object.entries(agent.scopes)) {
+    if (!scope.source) {
+      errors.push(`[${label}] scope "${scopeName}" missing "source"`);
+    }
+    if (!scope.target) {
+      errors.push(`[${label}] scope "${scopeName}" missing "target"`);
+    }
+
+    for (const part of ['source', 'target']) {
+      const pathVal = scope?.[part]?.path;
+      if (typeof pathVal !== 'string' || pathVal.trim() === '') {
+        errors.push(`[${label}] scope "${scopeName}" ${part}.path missing or empty`);
+        continue;
+      }
+      if (!pathVal.startsWith('~') && !pathVal.startsWith('.') && !pathVal.startsWith('${projectRoot}')) {
+        errors.push(`[${label}] scope "${scopeName}" ${part}.path "${pathVal}" does not start with "~", ".", or "\${projectRoot}"`);
       }
     }
   }
