@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added `scripts/sync-agent-docs.mjs` to auto-generate agent tables in `README.md` and `COMPATIBILITY.md` from `bin/agent-registry.json`.
+- Added `scripts/validate-agent-registry.mjs` to validate registry data integrity (required fields, duplicate IDs, path format, scope completeness).
+- Added `registry:sync` and `registry:validate` npm scripts.
+- Added CI steps to validate agent registry and detect docs drift on every push/PR.
+- Wrapped existing agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync.
+
 ## 0.2.0
 
 - Expanded the built-in agent registry from 8 presets to 42 curated agents.
