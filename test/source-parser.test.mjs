@@ -315,3 +315,90 @@ test('sanitizeSubpath: allows dots in directory names', () => {
 test('sanitizeSubpath: allows single dot segments', () => {
   assert.equal(sanitizeSubpath('./skills'), './skills');
 });
+
+test('sanitizeSubpath: rejects absolute POSIX path', () => {
+  assert.throws(() => sanitizeSubpath('/etc/passwd'), /Absolute path detected/);
+});
+
+test('sanitizeSubpath: rejects absolute Windows path', () => {
+  assert.throws(() => sanitizeSubpath('C:/Windows/system32'), /Absolute path detected/);
+});
+
+test('sanitizeSubpath: rejects UNC-style path', () => {
+  assert.throws(() => sanitizeSubpath('//server/share'), /Absolute path detected/);
+});
+
+/* ========== Regression: GitLab repo named "tree" (fix1) ========== */
+
+test('parseSource: GitLab URL where repo is named "tree"', () => {
+  const r = parseSource('https://gitlab.com/group/tree');
+  assert.equal(r.type, 'gitlab');
+  assert.equal(r.owner, 'group');
+  assert.equal(r.repo, 'tree');
+});
+
+test('parseSource: GitLab URL where subgroup is named "tree"', () => {
+  const r = parseSource('https://gitlab.com/group/tree/repo');
+  assert.equal(r.type, 'gitlab');
+  assert.equal(r.owner, 'group/tree');
+  assert.equal(r.repo, 'repo');
+});
+
+/* ========== Regression: disambiguation of shorthand vs local (fix3) ========== */
+
+test('parseSource: bare "owner/repo" matching GitHub username rules is shorthand', () => {
+  const r = parseSource('my-org/my-repo');
+  assert.equal(r.type, 'github');
+  assert.equal(r.owner, 'my-org');
+  assert.equal(r.repo, 'my-repo');
+});
+
+test('parseSource: path with spaces treated as local', () => {
+  const r = parseSource('my skills/foo');
+  assert.equal(r.type, 'local');
+});
+
+test('parseSource: path with leading hyphen in owner treated as local', () => {
+  const r = parseSource('-invalid/repo');
+  assert.equal(r.type, 'local');
+});
+
+test('parseSource: multi-segment path falls back to local', () => {
+  const r = parseSource('a/b/c');
+  assert.equal(r.type, 'local');
+});
+
+/* ========== Regression: ssh:// protocol (fix4) ========== */
+
+test('parseSource: ssh:// protocol GitHub URL', () => {
+  const r = parseSource('ssh://git@github.com/owner/repo.git');
+  assert.equal(r.type, 'github');
+  assert.equal(r.owner, 'owner');
+  assert.equal(r.repo, 'repo');
+});
+
+test('parseSource: ssh:// protocol GitLab URL', () => {
+  const r = parseSource('ssh://git@gitlab.com/group/repo.git');
+  assert.equal(r.type, 'gitlab');
+  assert.equal(r.owner, 'group');
+  assert.equal(r.repo, 'repo');
+});
+
+test('parseSource: ssh:// protocol unknown host', () => {
+  const r = parseSource('ssh://git@bitbucket.org/owner/repo.git');
+  assert.equal(r.type, 'git-ssh');
+  assert.equal(r.owner, 'owner');
+  assert.equal(r.repo, 'repo');
+});
+
+/* ========== Regression: host spoofing prevention (fix4) ========== */
+
+test('parseSource: evil host notgithub.com is not classified as github', () => {
+  const r = parseSource('https://notgithub.com/owner/repo');
+  assert.equal(r.type, 'git-ssh');
+});
+
+test('parseSource: evil host github.com.evil.example is not classified as github', () => {
+  const r = parseSource('https://github.com.evil.example/owner/repo');
+  assert.equal(r.type, 'git-ssh');
+});

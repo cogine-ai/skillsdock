@@ -3881,16 +3881,7 @@ function _parseGitLabUrlPath(pathname, base) {
       subpath = sanitizeSubpath(parts.slice(dashIdx + 3).join('/'));
     }
   } else {
-    const treeIdx = parts.indexOf('tree');
-    if (treeIdx !== -1) {
-      pathParts = parts.slice(0, treeIdx);
-      if (parts.length > treeIdx + 1) branch = parts[treeIdx + 1];
-      if (parts.length > treeIdx + 2) {
-        subpath = sanitizeSubpath(parts.slice(treeIdx + 2).join('/'));
-      }
-    } else {
-      pathParts = parts;
-    }
+    pathParts = parts;
   }
 
   if (pathParts.length < 2) return { ...base, type: 'gitlab' };
@@ -3899,6 +3890,12 @@ function _parseGitLabUrlPath(pathname, base) {
   const repo = pathParts[pathParts.length - 1];
 
   return { ...base, type: 'gitlab', owner, repo, branch, subpath };
+}
+
+function _classifyHost(host) {
+  if (host === 'github.com' || host.endsWith('.github.com')) return 'github';
+  if (host === 'gitlab.com' || host.endsWith('.gitlab.com')) return 'gitlab';
+  return 'git-ssh';
 }
 
 function _parseShorthand(input, base, type) {
@@ -3926,7 +3923,10 @@ function _parseShorthand(input, base, type) {
 
 function sanitizeSubpath(subpath) {
   if (subpath == null) return subpath;
-  const normalized = subpath.replace(/\\/g, '/');
+  const normalized = String(subpath).replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+    throw new Error(`Absolute path detected in subpath: "${subpath}"`);
+  }
   for (const seg of normalized.split('/')) {
     if (seg === '..') {
       throw new Error(`Path traversal detected in subpath: "${subpath}"`);
@@ -3961,14 +3961,14 @@ function parseSource(raw) {
     return { ...base, type: 'local' };
   }
 
-  const sshMatch = trimmed.match(/^git@([^:]+):(.+?)(?:\.git)?\/?$/);
+  const scpMatch = trimmed.match(/^git@([^:]+):(.+?)(?:\.git)?\/?$/);
+  const sshProtoMatch = !scpMatch && trimmed.match(/^ssh:\/\/(?:git@)?([^\/:]+)[\/:](.+?)(?:\.git)?\/?$/);
+  const sshMatch = scpMatch || sshProtoMatch;
   if (sshMatch) {
     const host = sshMatch[1];
     const pathPart = sshMatch[2];
     const segments = pathPart.split('/');
-    const type = host.includes('gitlab') ? 'gitlab'
-      : host.includes('github') ? 'github'
-        : 'git-ssh';
+    const type = _classifyHost(host);
     if (segments.length >= 2) {
       const owner = segments.slice(0, -1).join('/');
       const repo = segments[segments.length - 1];
@@ -3986,10 +3986,11 @@ function parseSource(raw) {
         .replace(/\/$/, '')
         .replace(/\.git$/, '');
 
-      if (hostname.includes('github.com')) {
+      const hostType = _classifyHost(hostname);
+      if (hostType === 'github') {
         return _parseGitHubUrlPath(pathname, base);
       }
-      if (hostname.includes('gitlab.com')) {
+      if (hostType === 'gitlab') {
         return _parseGitLabUrlPath(pathname, base);
       }
 
@@ -4008,7 +4009,7 @@ function parseSource(raw) {
     return _parseShorthand(prefixMatch[2], base, prefixMatch[1]);
   }
 
-  if (/^[^\s\/]+\/[^\s\/]+(@[^\s\/]+)?$/.test(trimmed)) {
+  if (/^[a-zA-Z\d](?:[a-zA-Z\d]|-(?=[a-zA-Z\d]))*\/[a-zA-Z\d._-]+(@[^\s\/]+)?$/.test(trimmed)) {
     return _parseShorthand(trimmed, base, 'github');
   }
 
