@@ -7,6 +7,7 @@ on:
       - master
       - develop
       - 'codex/**'
+      - 'cursor/**'
   pull_request:
 
 jobs:
@@ -30,5 +31,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Validate agent registry
+        run: node scripts/validate-agent-registry.mjs
+
+      - name: Check docs are in sync with registry
+        run: |
+          node scripts/sync-agent-docs.mjs
+          git diff --exit-code README.md COMPATIBILITY.md
+
       - name: Run test suite
         run: npm test
+
+      - name: Verify package packability
+        run: npm run pack:check
