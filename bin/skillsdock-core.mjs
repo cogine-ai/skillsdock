@@ -3883,7 +3883,7 @@ async function writeProjectLockfile(projectRoot, lockData) {
     sorted[key] = lockData.skills[key];
   }
   const output = JSON.stringify({ version: lockData.version ?? 1, skills: sorted }, null, 2) + '\n';
-  await fs.writeFile(lockPath, output, 'utf8');
+  await writeFileAtomic(lockPath, output);
 }
 
 async function computeSkillFolderHash(skillDirPath) {
