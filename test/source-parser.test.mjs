@@ -402,3 +402,19 @@ test('parseSource: evil host github.com.evil.example is not classified as github
   const r = parseSource('https://github.com.evil.example/owner/repo');
   assert.equal(r.type, 'git-ssh');
 });
+
+/* ========== Regression: case-insensitive host classification ========== */
+
+test('parseSource: mixed-case GitHub.com host is recognized', () => {
+  const r = parseSource('git@GitHub.com:owner/repo.git');
+  assert.equal(r.type, 'github');
+  assert.equal(r.owner, 'owner');
+  assert.equal(r.repo, 'repo');
+});
+
+test('parseSource: uppercase GITLAB.COM host is recognized', () => {
+  const r = parseSource('https://GITLAB.COM/group/repo');
+  assert.equal(r.type, 'gitlab');
+  assert.equal(r.owner, 'group');
+  assert.equal(r.repo, 'repo');
+});

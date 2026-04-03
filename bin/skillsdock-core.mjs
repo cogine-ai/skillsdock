@@ -3893,8 +3893,9 @@ function _parseGitLabUrlPath(pathname, base) {
 }
 
 function _classifyHost(host) {
-  if (host === 'github.com' || host.endsWith('.github.com')) return 'github';
-  if (host === 'gitlab.com' || host.endsWith('.gitlab.com')) return 'gitlab';
+  const h = String(host || '').toLowerCase();
+  if (h === 'github.com' || h.endsWith('.github.com')) return 'github';
+  if (h === 'gitlab.com' || h.endsWith('.gitlab.com')) return 'gitlab';
   return 'git-ssh';
 }
 
