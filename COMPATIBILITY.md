@@ -4,6 +4,7 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
 
 ## Agent Path Matrix
 
+<!-- COMPAT-MATRIX-START -->
 | Agent | Display Name | Family | Canonical Dir | User Scope Source/Target | Project Scope Source/Target | Target Format |
 |---|---|---|---|---|---|---|
 | openclaw | OpenClaw | dedicated | `skills` | `~/.openclaw/skills` | `${projectRoot}/skills` | `openclaw-md` |
@@ -48,6 +49,7 @@ SkillsDock v0.2.0 supports both **user scope** and **project scope** for each bu
 | zencoder | Zencoder | dedicated | `.zencoder/skills` | `~/.zencoder/skills` | `${projectRoot}/.zencoder/skills` | `skill-md` |
 | pochi | Pochi | dedicated | `.pochi/skills` | `~/.pochi/skills` | `${projectRoot}/.pochi/skills` | `skill-md` |
 | adal | AdaL | dedicated | `.adal/skills` | `~/.adal/skills` | `${projectRoot}/.adal/skills` | `skill-md` |
+<!-- COMPAT-MATRIX-END -->
 
 ## Source Format Mapping
 

@@ -279,7 +279,52 @@ See [COMPATIBILITY.md](./COMPATIBILITY.md).
 
 ## Built-In Agent Registry
 
-The built-in registry now covers 42 agents, including `amp`, `antigravity`, `augment`, `gemini-cli`, `github-copilot`, `goose`, `roo`, `windsurf`, `zencoder`, `pochi`, and `adal`.
+<!-- AGENT-TABLE-START -->
+| Agent Name | ID | User Scope Path | Project Scope Path | Install Family |
+|---|---|---|---|---|
+| OpenClaw | `openclaw` | `~/.openclaw/skills` | `${projectRoot}/skills` | dedicated |
+| Codex | `codex` | `~/.codex/skills` | `${projectRoot}/.codex/skills` | universal |
+| Claude | `claude` | `~/.claude/skills` | `${projectRoot}/.claude/skills` | dedicated |
+| Cursor | `cursor` | `~/.cursor/rules` | `${projectRoot}/.cursor/rules` | universal |
+| Cline | `cline` | `~/.cline/rules` | `${projectRoot}/.cline/rules` | universal |
+| CodeBuddy | `codebuddy` | `~/.codebuddy/skills` | `${projectRoot}/.codebuddy/skills` | dedicated |
+| Trae | `trae` | `~/.trae/skills` | `${projectRoot}/.trae/skills` | dedicated |
+| OpenCode | `opencode` | `~/.opencode/skills` | `${projectRoot}/.opencode/skills` | universal |
+| Amp | `amp` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Antigravity | `antigravity` | `~/.gemini/antigravity/skills` | `${projectRoot}/.agents/skills` | universal |
+| Augment | `augment` | `~/.augment/skills` | `${projectRoot}/.augment/skills` | dedicated |
+| Command Code | `command-code` | `~/.commandcode/skills` | `${projectRoot}/.commandcode/skills` | dedicated |
+| Continue | `continue` | `~/.continue/skills` | `${projectRoot}/.continue/skills` | dedicated |
+| Cortex Code | `cortex` | `~/.snowflake/cortex/skills` | `${projectRoot}/.cortex/skills` | dedicated |
+| Crush | `crush` | `~/.config/crush/skills` | `${projectRoot}/.crush/skills` | dedicated |
+| Deep Agents | `deepagents` | `~/.deepagents/agent/skills` | `${projectRoot}/.agents/skills` | universal |
+| Droid | `droid` | `~/.factory/skills` | `${projectRoot}/.factory/skills` | dedicated |
+| Gemini CLI | `gemini-cli` | `~/.gemini/skills` | `${projectRoot}/.agents/skills` | universal |
+| GitHub Copilot | `github-copilot` | `~/.copilot/skills` | `${projectRoot}/.agents/skills` | universal |
+| Goose | `goose` | `~/.config/goose/skills` | `${projectRoot}/.goose/skills` | dedicated |
+| Junie | `junie` | `~/.junie/skills` | `${projectRoot}/.junie/skills` | dedicated |
+| iFlow CLI | `iflow-cli` | `~/.iflow/skills` | `${projectRoot}/.iflow/skills` | dedicated |
+| Kilo Code | `kilo` | `~/.kilocode/skills` | `${projectRoot}/.kilocode/skills` | dedicated |
+| Kimi Code CLI | `kimi-cli` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Kiro CLI | `kiro-cli` | `~/.kiro/skills` | `${projectRoot}/.kiro/skills` | dedicated |
+| Kode | `kode` | `~/.kode/skills` | `${projectRoot}/.kode/skills` | dedicated |
+| MCPJam | `mcpjam` | `~/.mcpjam/skills` | `${projectRoot}/.mcpjam/skills` | dedicated |
+| Mistral Vibe | `mistral-vibe` | `~/.vibe/skills` | `${projectRoot}/.vibe/skills` | dedicated |
+| Mux | `mux` | `~/.mux/skills` | `${projectRoot}/.mux/skills` | dedicated |
+| Neovate | `neovate` | `~/.neovate/skills` | `${projectRoot}/.neovate/skills` | dedicated |
+| OpenHands | `openhands` | `~/.openhands/skills` | `${projectRoot}/.openhands/skills` | dedicated |
+| Pi | `pi` | `~/.pi/agent/skills` | `${projectRoot}/.pi/skills` | dedicated |
+| Qoder | `qoder` | `~/.qoder/skills` | `${projectRoot}/.qoder/skills` | dedicated |
+| Qwen Code | `qwen-code` | `~/.qwen/skills` | `${projectRoot}/.qwen/skills` | dedicated |
+| Replit | `replit` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Roo Code | `roo` | `~/.roo/skills` | `${projectRoot}/.roo/skills` | dedicated |
+| Trae CN | `trae-cn` | `~/.trae-cn/skills` | `${projectRoot}/.trae-cn/skills` | dedicated |
+| Warp | `warp` | `~/.agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/skills` | `${projectRoot}/.windsurf/skills` | dedicated |
+| Zencoder | `zencoder` | `~/.zencoder/skills` | `${projectRoot}/.zencoder/skills` | dedicated |
+| Pochi | `pochi` | `~/.pochi/skills` | `${projectRoot}/.pochi/skills` | dedicated |
+| AdaL | `adal` | `~/.adal/skills` | `${projectRoot}/.adal/skills` | dedicated |
+<!-- AGENT-TABLE-END -->
 
 Each registry entry includes:
 
