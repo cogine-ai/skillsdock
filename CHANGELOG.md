@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
+- `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
+- `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
+- Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
 - Added `scripts/sync-agent-docs.mjs` to auto-generate agent tables in `README.md` and `COMPATIBILITY.md` from `bin/agent-registry.json`.
 - Added `scripts/validate-agent-registry.mjs` to validate registry data integrity (required fields, duplicate IDs, path format, scope completeness).
 - Added `registry:sync` and `registry:validate` npm scripts.
