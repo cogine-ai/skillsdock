@@ -3862,8 +3862,13 @@ async function readProjectLockfile(projectRoot) {
       return emptyLockData();
     }
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return emptyLockData();
-    return { version: parsed.version ?? 1, skills: parsed.skills ?? {} };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return emptyLockData();
+    const version = Number.isInteger(parsed.version) ? parsed.version : 1;
+    const skills =
+      parsed.skills && typeof parsed.skills === 'object' && !Array.isArray(parsed.skills)
+        ? parsed.skills
+        : {};
+    return { version, skills };
   } catch (err) {
     if (err?.code === 'ENOENT') return emptyLockData();
     console.warn(`[skillsdock] Could not read ${PROJECT_LOCKFILE_NAME}: ${err.message ?? err} – treating as empty`);
@@ -3905,7 +3910,9 @@ async function computeSkillFolderHash(skillDirPath) {
   const hash = crypto.createHash('sha256');
   for (const relPath of entries) {
     const content = await fs.readFile(path.join(skillDirPath, relPath));
-    hash.update(relPath);
+    hash.update(`${Buffer.byteLength(relPath, 'utf8')}:`);
+    hash.update(relPath, 'utf8');
+    hash.update(`:${content.byteLength}:`);
     hash.update(content);
   }
   return hash.digest('hex');

@@ -79,6 +79,38 @@ test('readProjectLockfile: handles missing skills key', async () => {
   await rm(dir, { recursive: true });
 });
 
+test('readProjectLockfile: handles skills as array gracefully', async () => {
+  const dir = await makeTmpDir();
+  await writeFile(path.join(dir, 'skills-lock.json'), '{"version":1,"skills":["bad"]}', 'utf8');
+  const data = await readProjectLockfile(dir);
+  assert.deepStrictEqual(data, { version: 1, skills: {} });
+  await rm(dir, { recursive: true });
+});
+
+test('readProjectLockfile: handles skills as string gracefully', async () => {
+  const dir = await makeTmpDir();
+  await writeFile(path.join(dir, 'skills-lock.json'), '{"version":1,"skills":"bad"}', 'utf8');
+  const data = await readProjectLockfile(dir);
+  assert.deepStrictEqual(data, { version: 1, skills: {} });
+  await rm(dir, { recursive: true });
+});
+
+test('readProjectLockfile: coerces non-integer version to 1', async () => {
+  const dir = await makeTmpDir();
+  await writeFile(path.join(dir, 'skills-lock.json'), '{"version":"two","skills":{}}', 'utf8');
+  const data = await readProjectLockfile(dir);
+  assert.strictEqual(data.version, 1);
+  await rm(dir, { recursive: true });
+});
+
+test('readProjectLockfile: handles top-level array gracefully', async () => {
+  const dir = await makeTmpDir();
+  await writeFile(path.join(dir, 'skills-lock.json'), '[1,2,3]', 'utf8');
+  const data = await readProjectLockfile(dir);
+  assert.deepStrictEqual(data, { version: 1, skills: {} });
+  await rm(dir, { recursive: true });
+});
+
 // ── writeProjectLockfile ───────────────────────────────────────────────
 
 test('writeProjectLockfile: writes sorted, deterministic JSON with trailing newline', async () => {
@@ -224,6 +256,21 @@ test('computeSkillFolderHash: recurses into subdirectories', async () => {
 
   const hash = await computeSkillFolderHash(skillDir);
   assert.match(hash, /^[0-9a-f]{64}$/);
+  await rm(dir, { recursive: true });
+});
+
+test('computeSkillFolderHash: no boundary ambiguity (file "a" content "bc" vs file "ab" content "c")', async () => {
+  const dir = await makeTmpDir();
+  const skillA = path.join(dir, 'skill-a');
+  const skillB = path.join(dir, 'skill-b');
+  await mkdir(skillA, { recursive: true });
+  await mkdir(skillB, { recursive: true });
+  await writeFile(path.join(skillA, 'a'), 'bc');
+  await writeFile(path.join(skillB, 'ab'), 'c');
+
+  const hashA = await computeSkillFolderHash(skillA);
+  const hashB = await computeSkillFolderHash(skillB);
+  assert.notStrictEqual(hashA, hashB, 'different path/content boundaries must produce different hashes');
   await rm(dir, { recursive: true });
 });
 
