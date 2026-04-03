@@ -28,6 +28,33 @@ This repository is intentionally **CLI-only**.
   - registry items may now retain additive external metadata such as `externalSourceUrl`, `externalHash`, and `externalPluginName`
   - `doctor` reports lockfile presence, version, and unmatched entries without writing back to the external lockfile
 
+## Project Lockfile (`skills-lock.json`)
+
+SkillsDock supports a project-level `skills-lock.json` that deterministically tracks installed skills, their sources, and content hashes. This file is designed for team collaboration:
+
+- **Git-friendly**: keys are sorted alphabetically, no timestamps, deterministic output
+- **Hash-based integrity**: each skill entry stores a SHA-256 hash computed from all files in the skill folder (path-aware, skips `.git` and `node_modules`)
+- **Merge-conflict safe**: if the lockfile contains git conflict markers (`<<<<<<<`), SkillsDock treats it as empty and prints a warning instead of crashing
+
+Schema:
+
+```json
+{
+  "version": 1,
+  "skills": {
+    "skill-name": {
+      "source": "owner/repo",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/owner/repo",
+      "computedHash": "sha256-hex-string",
+      "skillPath": "relative/path/to/skill"
+    }
+  }
+}
+```
+
+The lockfile lives at `${projectRoot}/skills-lock.json` (auto-detected via `detectProjectRoot()`).
+
 ## Design Principle
 
 SkillsDock uses a curated local agent path registry as a **pattern seed**.
