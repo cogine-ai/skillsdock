@@ -125,6 +125,7 @@ skillsdock cleanup --rollback <runId> [--registry <path>]
 skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
 skillsdock inspect <id|key|path> [--registry <path>] [--json]
 skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--registry <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+skillsdock sync --from node_modules [--scope user|project] [--dry-run]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
 ```
@@ -171,6 +172,37 @@ Behavior:
 - If source and destination already resolve to the same real path, sync is a no-op for that item.
 - Existing broken or circular destination symlinks are replaced safely during sync.
 - Atomic copy writes are used (`tmp` + `rename`).
+
+## Syncing Skills From `node_modules`
+
+SkillsDock can discover and install skills published as npm packages:
+
+```bash
+# discover and sync all skills from node_modules (project scope)
+skillsdock sync --from node_modules
+
+# preview what would be synced without writing files
+skillsdock sync --from node_modules --dry-run
+
+# sync to user scope instead of project
+skillsdock sync --from node_modules --scope user
+```
+
+### How It Works
+
+1. **Discovery**: scans `node_modules` for packages containing `SKILL.md` files. Each package is checked at three locations: package root, `skills/`, and `.agents/skills/`. Scoped packages (`@org/pkg`) are fully supported.
+2. **Incremental diff**: computes a SHA-256 hash of each discovered skill directory and compares it against `skills-lock.json`. Skills with unchanged hashes are skipped.
+3. **Install/Update**: new or changed skills are copied into `.agents/skills/<skill-name>/` and the lockfile is updated with `sourceType: "node_modules"`.
+4. **Lockfile tracking**: each synced skill is recorded in `skills-lock.json` with the npm package name as `source`.
+
+### Output
+
+The command prints a summary showing:
+
+- Total skills discovered
+- Skills skipped (unchanged)
+- Skills installed (new)
+- Skills updated (hash changed)
 
 ## Supported Formats
 

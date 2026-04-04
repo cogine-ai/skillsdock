@@ -1873,6 +1873,7 @@ Usage:
   skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
   skillsdock inspect <id|key|path> [--registry <path>] [--json]
   skillsdock sync --to <agent|target> --scope <user|project> [--registry <path>] [--config <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+  skillsdock sync --from node_modules [--scope user|project] [--dry-run]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
   skillsdock version
 
@@ -1885,6 +1886,7 @@ Examples:
   skillsdock cleanup --plan
   skillsdock list --changed
   skillsdock sync --to openclaw --scope user --dry-run
+  skillsdock sync --from node_modules --dry-run
 `);
 }
 
@@ -3408,9 +3410,14 @@ async function createSymlink(filePath, sourcePath) {
  * @throws {Error} 当提供了无效的 --mode 或 --fallback 值时抛出。
  */
 async function cmdSync(flags, context) {
+  const fromInput = typeof flags.from === 'string' ? flags.from : undefined;
+  if (fromInput === 'node_modules' || fromInput === 'node-modules') {
+    return cmdSyncFromNodeModules(flags, context);
+  }
+
   const targetInput = flags.to || flags.target;
   if (!targetInput || typeof targetInput !== 'string') {
-    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>');
+    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>\n       skillsdock sync --from node_modules [--scope user|project] [--dry-run]');
   }
 
   const projectRoot = context.projectRoot;
@@ -4107,6 +4114,160 @@ async function removeLockfileEntry(projectRoot, skillName) {
   await writeProjectLockfile(projectRoot, lockData);
 }
 
+// ── node_modules skill discovery + sync ─────────────────────────────────
+
+const NODE_MODULES_SKIP_DIRS = new Set(['.bin', '.cache', '.package-lock.json', '.staging', '.yarn-integrity']);
+const NODE_MODULES_SKILL_SEARCH_LOCATIONS = ['', 'skills', '.agents/skills'];
+
+async function discoverNodeModuleSkills(projectRoot) {
+  const nodeModulesDir = path.join(projectRoot, 'node_modules');
+  const results = [];
+
+  let topEntries;
+  try {
+    topEntries = await fs.readdir(nodeModulesDir, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === 'ENOENT') return results;
+    throw err;
+  }
+
+  const packageDirs = [];
+
+  for (const entry of topEntries) {
+    if (!entry.isDirectory()) continue;
+    if (NODE_MODULES_SKIP_DIRS.has(entry.name)) continue;
+
+    if (entry.name.startsWith('@')) {
+      let scopedEntries;
+      try {
+        scopedEntries = await fs.readdir(path.join(nodeModulesDir, entry.name), { withFileTypes: true });
+      } catch { continue; }
+      for (const sub of scopedEntries) {
+        if (sub.isDirectory()) {
+          packageDirs.push({ packageName: `${entry.name}/${sub.name}`, dir: path.join(nodeModulesDir, entry.name, sub.name) });
+        }
+      }
+    } else {
+      packageDirs.push({ packageName: entry.name, dir: path.join(nodeModulesDir, entry.name) });
+    }
+  }
+
+  for (const { packageName, dir } of packageDirs) {
+    for (const searchLoc of NODE_MODULES_SKILL_SEARCH_LOCATIONS) {
+      const searchDir = searchLoc ? path.join(dir, searchLoc) : dir;
+      const skillMdPath = path.join(searchDir, 'SKILL.md');
+
+      let exists;
+      try {
+        await fs.access(skillMdPath);
+        exists = true;
+      } catch { exists = false; }
+
+      if (!exists) continue;
+
+      const files = [];
+      try {
+        const items = await fs.readdir(searchDir, { withFileTypes: true });
+        for (const item of items) {
+          if (item.isFile()) files.push(item.name);
+        }
+      } catch { continue; }
+
+      const skillName = inferNameFromPath(skillMdPath);
+
+      results.push({
+        packageName,
+        skillName,
+        skillPath: searchDir,
+        files
+      });
+    }
+  }
+
+  return results;
+}
+
+async function cmdSyncFromNodeModules(flags, context) {
+  const projectRoot = context.projectRoot;
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'project';
+
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw new Error(`Invalid --scope value "${scope}". Use --scope user|project.`);
+  }
+
+  const discovered = await discoverNodeModuleSkills(projectRoot);
+
+  if (discovered.length === 0) {
+    console.log('No skills found in node_modules.');
+    return;
+  }
+
+  console.log(`Discovered ${discovered.length} skill(s) in node_modules.`);
+
+  const lockData = await readProjectLockfile(projectRoot);
+
+  const canonicalBase = resolveTemplatePath(getCanonicalSkillsPathTemplate(scope), { projectRoot });
+
+  const counters = { discovered: discovered.length, skipped: 0, installed: 0, updated: 0 };
+  const details = [];
+
+  for (const skill of discovered) {
+    const currentHash = await computeSkillFolderHash(skill.skillPath);
+    const lockEntry = lockData.skills[skill.skillName];
+    const previousHash = lockEntry?.computedHash;
+
+    if (previousHash && previousHash === currentHash) {
+      counters.skipped += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action: 'up to date' });
+      continue;
+    }
+
+    const isUpdate = Boolean(previousHash);
+    const destDir = path.join(canonicalBase, skill.skillName);
+
+    if (dryRun) {
+      const action = isUpdate ? 'would update' : 'would install';
+      counters[isUpdate ? 'updated' : 'installed'] += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+      continue;
+    }
+
+    await fs.mkdir(destDir, { recursive: true });
+
+    for (const fileName of skill.files) {
+      const srcFile = path.join(skill.skillPath, fileName);
+      const destFile = path.join(destDir, fileName);
+      const content = await fs.readFile(srcFile, 'utf8');
+      await writeFileAtomic(destFile, content);
+    }
+
+    await updateLockfileEntry(projectRoot, skill.skillName, {
+      source: skill.packageName,
+      sourceType: 'node_modules',
+      computedHash: currentHash,
+      skillPath: path.relative(projectRoot, destDir)
+    });
+
+    const action = isUpdate ? 'updated' : 'installed';
+    counters[action] += 1;
+    details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+  }
+
+  if (dryRun) {
+    console.log('\nDry run — no files written.\n');
+  }
+
+  for (const d of details) {
+    const dest = d.dest ? ` -> ${d.dest}` : '';
+    console.log(`  ${d.action}: ${d.skillName} (from ${d.packageName})${dest}`);
+  }
+
+  console.log(
+    `\nSummary: discovered=${counters.discovered} skipped=${counters.skipped} installed=${counters.installed} updated=${counters.updated}`
+  );
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -4179,6 +4340,7 @@ export {
   computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
+  discoverNodeModuleSkills,
   getOwnerRepo,
   normalizeRegistry,
   normalizeConfigV2,
