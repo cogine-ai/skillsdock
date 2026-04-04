@@ -4708,6 +4708,9 @@ async function cmdRemove(flags, args, context) {
   const force = Boolean(flags.force);
   const scope = typeof flags.scope === 'string' ? flags.scope : undefined;
 
+  if (isAll && args.length > 0) {
+    throw makeCliError('--all and <selector> are mutually exclusive. Use one or the other.', 2);
+  }
   if (isAll && !scope) {
     throw makeCliError('--all requires --scope user|project', 2);
   }
@@ -4732,6 +4735,9 @@ async function cmdRemove(flags, args, context) {
       allCopies: Boolean(flags['all-copies'] || flags.allCopies),
       includeDeleted: false
     });
+    if (scope) {
+      matches = matches.filter((item) => itemMatchesSourceScope(item, scope));
+    }
     if (matches.length === 0) {
       throw makeCliError(`Skill not found: ${selector}`, 2);
     }
@@ -4739,9 +4745,15 @@ async function cmdRemove(flags, args, context) {
 
   const scopesToProcess = scope ? [scope] : ['user', 'project'];
 
-  const counters = { files: 0, symlinks: 0, registryUpdated: 0, lockfileUpdated: 0 };
+  const counters = { files: 0, symlinks: 0, registryUpdated: 0, lockfileUpdated: 0, failed: 0 };
   const actions = [];
   const skipped = [];
+
+  let lockfileExists = false;
+  if (projectRoot) {
+    const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+    lockfileExists = await pathExists(lockPath);
+  }
 
   for (const match of matches) {
     if (isFrozen(match) && !force) {
@@ -4753,7 +4765,7 @@ async function cmdRemove(flags, args, context) {
       const targets = await collectRemoveTargets(match, s, projectRoot, homeDir);
 
       for (const symlink of targets.symlinks) {
-        actions.push({ type: 'symlink', path: symlink, skill: match.id, scope: s });
+        actions.push({ type: 'symlink', path: symlink, skill: match.id, key: match.key, scope: s });
       }
 
       for (const filePath of targets.files) {
@@ -4762,13 +4774,13 @@ async function cmdRemove(flags, args, context) {
           { projectRoot, homeDir }
         );
         if (!isPathUnderBase(filePath, canonicalBase)) continue;
-        actions.push({ type: 'file', path: filePath, skill: match.id, scope: s });
+        actions.push({ type: 'file', path: filePath, skill: match.id, key: match.key, scope: s });
       }
     }
 
     actions.push({ type: 'registry', key: match.key, skill: match.id });
-    if (projectRoot) {
-      actions.push({ type: 'lockfile', skill: match.id, projectRoot });
+    if (projectRoot && lockfileExists) {
+      actions.push({ type: 'lockfile', skill: match.id, key: match.key, projectRoot });
     }
   }
 
@@ -4792,26 +4804,39 @@ async function cmdRemove(flags, args, context) {
     return;
   }
 
+  const failedKeys = new Set();
+
   for (const action of actions) {
     if (action.type === 'symlink') {
       try {
         await fs.unlink(action.path);
         counters.symlinks++;
       } catch (err) {
-        if (err?.code !== 'ENOENT') {
-          console.warn(`Warning: failed to remove symlink ${action.path}: ${err.message}`);
+        if (err?.code === 'ENOENT') {
+          continue;
         }
+        console.warn(`Error: failed to remove symlink ${action.path}: ${err.message}`);
+        failedKeys.add(action.key);
+        counters.failed++;
       }
     } else if (action.type === 'file') {
       try {
         await fs.rm(action.path, { recursive: true });
         counters.files++;
       } catch (err) {
-        if (err?.code !== 'ENOENT') {
-          console.warn(`Warning: failed to remove ${action.path}: ${err.message}`);
+        if (err?.code === 'ENOENT') {
+          continue;
         }
+        console.warn(`Error: failed to remove ${action.path}: ${err.message}`);
+        failedKeys.add(action.key);
+        counters.failed++;
       }
-    } else if (action.type === 'registry') {
+    }
+  }
+
+  for (const action of actions) {
+    if (action.type === 'registry') {
+      if (failedKeys.has(action.key)) continue;
       const key = action.key;
       if (registry.items[key]) {
         const now = new Date().toISOString();
@@ -4822,6 +4847,7 @@ async function cmdRemove(flags, args, context) {
         counters.registryUpdated++;
       }
     } else if (action.type === 'lockfile') {
+      if (failedKeys.has(action.key)) continue;
       try {
         await removeLockfileEntry(action.projectRoot, action.skill);
         counters.lockfileUpdated++;
@@ -4843,8 +4869,11 @@ async function cmdRemove(flags, args, context) {
   }
 
   console.log(
-    `Removed ${counters.files} dir(s), ${counters.symlinks} symlink(s), updated ${counters.registryUpdated} registry entry(ies), updated ${counters.lockfileUpdated} lockfile entry(ies)`
+    `Removed ${counters.files} dir(s), ${counters.symlinks} symlink(s), updated ${counters.registryUpdated} registry entry(ies), updated ${counters.lockfileUpdated} lockfile entry(ies)${counters.failed > 0 ? `, failed ${counters.failed}` : ''}`
   );
+  if (counters.failed > 0) {
+    process.exitCode = 1;
+  }
 }
 
 // ── node_modules skill discovery + sync ─────────────────────────────────
