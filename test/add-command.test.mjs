@@ -112,7 +112,6 @@ test('add: installs skills from local path (user scope)', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-add-local-'));
   const homeDir = path.join(base, 'home');
   const sourceDir = path.join(base, 'source');
-  const configPath = path.join(base, 'config.json');
   const registryPath = path.join(base, 'registry.json');
 
   await mkdir(path.join(sourceDir, 'demo-skill'), { recursive: true });
@@ -137,7 +136,6 @@ test('add: installs multiple skills from local path', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-add-multi-'));
   const homeDir = path.join(base, 'home');
   const sourceDir = path.join(base, 'source');
-  const configPath = path.join(base, 'config.json');
   const registryPath = path.join(base, 'registry.json');
 
   await mkdir(path.join(sourceDir, 'demo-skill'), { recursive: true });
@@ -437,6 +435,9 @@ test('add: --copy flag forces copy mode', async () => {
   const installedSkillMd = path.join(homeDir, '.agents', 'skills', 'demo-skill', 'SKILL.md');
   const content = await readFile(installedSkillMd, 'utf8');
   assert.ok(content.includes('demo-skill'), 'File should be copied');
+
+  const stats = await lstat(installedSkillMd);
+  assert.ok(!stats.isSymbolicLink(), 'Installed file should not be a symlink in copy mode');
 });
 
 test('add: skips SKILL.md files with invalid frontmatter', async () => {

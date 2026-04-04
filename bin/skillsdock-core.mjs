@@ -647,8 +647,8 @@ async function writeExternalSkillLock(lockPath, entries) {
     version: EXTERNAL_SKILL_LOCK_VERSION,
     skills
   };
-  await ensureParentDir(lockPath);
-  await writeJson(lockPath, data);
+  const content = `${JSON.stringify(data, null, 2)}\n`;
+  await writeFileAtomic(lockPath, content);
 }
 
 function resolveExternalSkillMetadataForFile(filePath, skillId, lockState, homeDir = HOME) {
@@ -3980,8 +3980,7 @@ async function installSkillToTarget(skillEntry, targetBaseDir, options = {}) {
     const srcPath = path.join(sourceDir, entry.name);
     const dstPath = path.join(destDir, entry.name);
     if (entry.isFile()) {
-      const content = await fs.readFile(srcPath);
-      await writeFileAtomic(dstPath, content);
+      await fs.copyFile(srcPath, dstPath);
     } else if (entry.isDirectory() && !DEFAULT_SCAN.ignoreDirs.includes(entry.name)) {
       await copyDirRecursive(srcPath, dstPath);
     }
@@ -3997,8 +3996,7 @@ async function copyDirRecursive(src, dest) {
     const srcPath = path.join(src, entry.name);
     const dstPath = path.join(dest, entry.name);
     if (entry.isFile()) {
-      const content = await fs.readFile(srcPath);
-      await writeFileAtomic(dstPath, content);
+      await fs.copyFile(srcPath, dstPath);
     } else if (entry.isDirectory()) {
       await copyDirRecursive(srcPath, dstPath);
     }
