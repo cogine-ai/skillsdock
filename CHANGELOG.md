@@ -14,6 +14,29 @@
   - `--dry-run` — preview actions without modifying files
   - `--force` — override `frozen` tag protection
 - Test suite `test/remove-command.test.mjs` covering normal removal, frozen protection, `--force`, `--dry-run`, `--all`, lockfile updates, registry tag updates, project scope, and error handling.
+- `skillsdock add <source>` — lightweight remote/local skill installation:
+  - Supports GitHub `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
+  - `--scope user|project` to control installation target (default: `user`)
+  - `--dry-run` to preview installation without writing files
+  - `--copy` to force copy mode instead of agent symlinks
+  - Clones GitHub repos with `git clone --depth 1 --single-branch` for minimal bandwidth
+  - Scans cloned/local directories for `SKILL.md` files (root, `skills/`, `.agents/skills/`)
+  - Installs skills to canonical `.agents/skills/<skill-name>/` directory
+  - Creates symlinks to non-universal agent directories by default
+  - Updates SkillsDock registry with installed skill metadata
+  - Updates lockfiles for both user and project scopes
+  - Validates `SKILL.md` frontmatter before installation; skips invalid files with warnings
+  - Cleans up temporary clone directories in a `finally` block
+- Added `writeExternalSkillLock()` for writing user-scope `.skill-lock.json` lockfiles
+- `sync --from node_modules` — discover and sync skills from `node_modules` packages:
+  - `discoverNodeModuleSkills(projectRoot)` scans `node_modules` (including scoped `@org/pkg` packages) for `SKILL.md` files in package root, `skills/`, and `.agents/skills/` directories
+  - Incremental diff using SHA-256 hash comparison (`computeSkillFolderHash`): unchanged skills are skipped ("up to date"), new/changed skills are installed/updated
+  - Syncs to canonical `.agents/skills/<skill-name>/` directory
+  - Updates `skills-lock.json` with `sourceType: "node_modules"` and package name as `source`
+  - `--dry-run` support: prints planned actions without writing files
+  - `--scope user|project` support (defaults to `project`)
+  - Skips `.bin`, `.cache`, and other non-package directories in `node_modules`
+- Test suite `test/node-modules-sync.test.mjs` covering discovery, scoped packages, incremental skip, hash-change update, dry-run, and lockfile updates
 
 - `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
 - `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).

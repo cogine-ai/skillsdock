@@ -629,6 +629,28 @@ async function readExternalSkillLock(homeDir = HOME) {
   return state;
 }
 
+async function writeExternalSkillLock(lockPath, entries) {
+  const skills = {};
+  for (const entry of entries) {
+    skills[entry.skillName] = {
+      source: entry.source || null,
+      sourceType: entry.sourceType || null,
+      sourceUrl: entry.sourceUrl || null,
+      skillPath: entry.skillPath || null,
+      skillFolderHash: entry.skillFolderHash || null,
+      installedAt: entry.installedAt || null,
+      updatedAt: entry.updatedAt || null,
+      pluginName: entry.pluginName || null
+    };
+  }
+  const data = {
+    version: EXTERNAL_SKILL_LOCK_VERSION,
+    skills
+  };
+  const content = `${JSON.stringify(data, null, 2)}\n`;
+  await writeFileAtomic(lockPath, content);
+}
+
 function resolveExternalSkillMetadataForFile(filePath, skillId, lockState, homeDir = HOME) {
   if (!lockState || !lockState.healthy) return normalizeExternalSkillMetadata(null);
 
@@ -1875,6 +1897,8 @@ Usage:
   skillsdock sync --to <agent|target> --scope <user|project> [--registry <path>] [--config <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
   skillsdock remove <selector> [--scope <user|project>] [--dry-run] [--force] [--all-copies]
   skillsdock remove --all --scope <user|project> [--dry-run] [--force]
+  skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
+  skillsdock sync --from node_modules [--scope user|project] [--dry-run]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
   skillsdock version
 
@@ -1887,6 +1911,10 @@ Examples:
   skillsdock cleanup --plan
   skillsdock list --changed
   skillsdock sync --to openclaw --scope user --dry-run
+  skillsdock add owner/repo --scope user
+  skillsdock add owner/repo@skill-name --dry-run
+  skillsdock add ./path/to/skills --scope project
+  skillsdock sync --from node_modules --dry-run
 `);
 }
 
@@ -3410,9 +3438,14 @@ async function createSymlink(filePath, sourcePath) {
  * @throws {Error} 当提供了无效的 --mode 或 --fallback 值时抛出。
  */
 async function cmdSync(flags, context) {
+  const fromInput = typeof flags.from === 'string' ? flags.from : undefined;
+  if (fromInput === 'node_modules' || fromInput === 'node-modules') {
+    return cmdSyncFromNodeModules(flags, context);
+  }
+
   const targetInput = flags.to || flags.target;
   if (!targetInput || typeof targetInput !== 'string') {
-    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>');
+    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>\n       skillsdock sync --from node_modules [--scope user|project] [--dry-run]');
   }
 
   const projectRoot = context.projectRoot;
@@ -3844,6 +3877,458 @@ async function cmdDoctor(flags, context) {
   } else {
     console.log(`\nDoctor result: ${issues.length} warning(s)`);
     process.exitCode = 1;
+  }
+}
+
+async function discoverSkillMdFiles(rootDir) {
+  const results = [];
+  const candidateDirs = ['', 'skills', '.agents/skills'];
+
+  for (const rel of candidateDirs) {
+    const searchDir = rel ? path.join(rootDir, rel) : rootDir;
+    if (!(await pathExists(searchDir))) continue;
+    await walkForSkillMd(searchDir, results, rootDir);
+  }
+
+  const seen = new Set();
+  return results.filter((entry) => {
+    if (seen.has(entry.skillPath)) return false;
+    seen.add(entry.skillPath);
+    return true;
+  });
+}
+
+async function walkForSkillMd(dir, results, rootDir, depth = 0) {
+  if (depth > DEFAULT_SCAN.maxDepth) return;
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (DEFAULT_SCAN.ignoreDirs.includes(entry.name)) continue;
+      await walkForSkillMd(fullPath, results, rootDir, depth + 1);
+      continue;
+    }
+    if (entry.isFile() && entry.name.toUpperCase() === 'SKILL.MD') {
+      const skillDir = path.dirname(fullPath);
+      const skillName = path.basename(skillDir);
+      results.push({
+        skillPath: fullPath,
+        skillDir,
+        skillName,
+        relativePath: path.relative(rootDir, fullPath)
+      });
+    }
+  }
+}
+
+function buildCloneUrl(source) {
+  if (source.owner && source.repo) {
+    const host = source.type === 'gitlab' ? 'gitlab.com' : 'github.com';
+    return `https://${host}/${source.owner}/${source.repo}.git`;
+  }
+  const raw = source.url || source.raw || '';
+  const cleaned = raw.replace(/\/tree\/.*$/, '').replace(/\/$/, '');
+  return cleaned.endsWith('.git') ? cleaned : `${cleaned}.git`;
+}
+
+async function cloneGitRepo(source, tmpDir) {
+  const repoUrl = buildCloneUrl(source);
+  const cloneDir = path.join(tmpDir, 'repo');
+
+  const cloneArgs = ['clone', '--depth', '1', '--single-branch'];
+  if (source.branch) {
+    cloneArgs.push('--branch', source.branch);
+  }
+  cloneArgs.push(repoUrl, cloneDir);
+
+  const result = spawnSync('git', cloneArgs, {
+    encoding: 'utf8',
+    timeout: 60000
+  });
+
+  if (result.status !== 0) {
+    const stderr = (result.stderr || '').trim();
+    throw new Error(`git clone failed: ${stderr || 'unknown error'}`);
+  }
+
+  if (source.subpath) {
+    const subDir = path.join(cloneDir, source.subpath);
+    if (!(await pathExists(subDir))) {
+      throw new Error(`Subpath "${source.subpath}" not found in cloned repository.`);
+    }
+    return subDir;
+  }
+
+  return cloneDir;
+}
+
+async function installSkillToTarget(skillEntry, targetBaseDir, options = {}) {
+  const { dryRun = false, useCopy = false } = options;
+  const destDir = path.join(targetBaseDir, skillEntry.skillName);
+  const destSkillMd = path.join(destDir, 'SKILL.md');
+
+  if (dryRun) {
+    return { installed: true, destDir, destSkillMd, action: 'copy' };
+  }
+
+  await fs.mkdir(destDir, { recursive: true });
+
+  const sourceDir = skillEntry.skillDir;
+  let entries;
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+
+  for (const entry of entries) {
+    const srcPath = path.join(sourceDir, entry.name);
+    const dstPath = path.join(destDir, entry.name);
+    if (entry.isFile()) {
+      await fs.copyFile(srcPath, dstPath);
+    } else if (entry.isDirectory() && !DEFAULT_SCAN.ignoreDirs.includes(entry.name)) {
+      await copyDirRecursive(srcPath, dstPath);
+    }
+  }
+
+  return { installed: true, destDir, destSkillMd, action: 'copy' };
+}
+
+async function copyDirRecursive(src, dest) {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dest, entry.name);
+    if (entry.isFile()) {
+      await fs.copyFile(srcPath, dstPath);
+    } else if (entry.isDirectory()) {
+      await copyDirRecursive(srcPath, dstPath);
+    }
+  }
+}
+
+async function createAgentSymlinks(skillName, canonicalDir, scope, options = {}) {
+  const { dryRun = false, useCopy = false } = options;
+  if (useCopy) return [];
+
+  const canonicalSkillDir = path.join(canonicalDir, skillName);
+  const links = [];
+
+  for (const agent of AGENT_REGISTRY.agents) {
+    if (agent.installFamily === 'universal') continue;
+    const scopeCfg = agent.scopes?.[scope];
+    if (!scopeCfg) continue;
+    const targetFormat = normalizeTargetFormat(
+      scopeCfg.target?.format || scopeCfg.source?.format,
+      scopeCfg.target?.path || scopeCfg.source?.path || ''
+    );
+    if (targetFormat !== 'skill-md') continue;
+
+    const agentSkillsDir = scopeCfg.target?.path || scopeCfg.source?.path;
+    if (!agentSkillsDir) continue;
+    const resolvedAgentDir = resolveTemplatePath(agentSkillsDir, options);
+    if (!resolvedAgentDir) continue;
+
+    const agentDestDir = path.join(resolvedAgentDir, skillName);
+    if (dryRun) {
+      links.push({ agent: agent.id, path: agentDestDir, action: 'symlink' });
+      continue;
+    }
+
+    try {
+      await fs.mkdir(path.dirname(agentDestDir), { recursive: true });
+      await removePathIfExists(agentDestDir);
+      const relTarget = path.relative(path.dirname(agentDestDir), canonicalSkillDir);
+      await fs.symlink(relTarget, agentDestDir);
+      links.push({ agent: agent.id, path: agentDestDir, action: 'symlink' });
+    } catch {
+      // Non-fatal: agent symlink creation is best-effort
+    }
+  }
+
+  return links;
+}
+
+async function removePathIfExists(filePath) {
+  try {
+    const stat = await fs.lstat(filePath);
+    if (stat.isSymbolicLink() || stat.isFile()) {
+      await fs.unlink(filePath);
+    } else if (stat.isDirectory()) {
+      await fs.rm(filePath, { recursive: true });
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
+function sourceUrl(source) {
+  if (source.raw && (source.raw.startsWith('https://') || source.raw.startsWith('http://'))) {
+    return source.raw;
+  }
+  if (source.owner && source.repo) {
+    return `https://github.com/${source.owner}/${source.repo}`;
+  }
+  return null;
+}
+
+async function cmdAdd(flags, args, context) {
+  const sourceArg = args[0];
+  if (!sourceArg || typeof sourceArg !== 'string') {
+    throw makeCliError('Usage: skillsdock add <source> [--scope user|project] [--dry-run] [--copy]');
+  }
+
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'user';
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw makeCliError(`Invalid --scope "${scope}". Use --scope user|project.`);
+  }
+
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const useCopy = Boolean(flags.copy);
+  const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
+
+  const source = parseSource(sourceArg);
+
+  const targetBaseDir =
+    scope === 'project'
+      ? path.join(projectRoot, UNIVERSAL_CANONICAL_DIR)
+      : path.resolve(expandHomePath(`~/${UNIVERSAL_CANONICAL_DIR}`, homeDir));
+
+  let tmpDir = null;
+  const installed = [];
+
+  try {
+    let searchRoot;
+
+    if (source.type === 'local') {
+      const localPath = path.resolve(expandHomePath(source.raw, homeDir));
+      if (!(await pathExists(localPath))) {
+        throw makeCliError(`Local path does not exist: ${localPath}`);
+      }
+      searchRoot = localPath;
+    } else {
+      tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'skillsdock-add-'));
+      searchRoot = await cloneGitRepo(source, tmpDir);
+    }
+
+    const skills = await discoverSkillMdFiles(searchRoot);
+
+    if (skills.length === 0) {
+      throw makeCliError(`No SKILL.md files found in ${sourceArg}.`);
+    }
+
+    const filtered = source.skillFilter
+      ? skills.filter(
+          (s) => s.skillName === source.skillFilter || s.skillName === slugify(source.skillFilter)
+        )
+      : skills;
+
+    if (filtered.length === 0) {
+      const available = skills.map((s) => s.skillName).join(', ');
+      throw makeCliError(
+        `Skill "${source.skillFilter}" not found. Available skills: ${available}`
+      );
+    }
+
+    for (const skillEntry of filtered) {
+      try {
+        parseContentForFormat('skill-md', await fs.readFile(skillEntry.skillPath, 'utf8'), skillEntry.skillPath);
+      } catch (error) {
+        console.log(`WARN: Skipping ${skillEntry.skillName}: ${error.message}`);
+        continue;
+      }
+
+      if (dryRun) {
+        const destDir = path.join(targetBaseDir, skillEntry.skillName);
+        console.log(`[dry-run] Would install ${skillEntry.skillName} -> ${destDir}`);
+        installed.push({
+          skillName: skillEntry.skillName,
+          destDir,
+          action: 'copy',
+          links: []
+        });
+        continue;
+      }
+
+      const result = await installSkillToTarget(skillEntry, targetBaseDir, { dryRun, useCopy });
+
+      const links = useCopy
+        ? []
+        : await createAgentSymlinks(skillEntry.skillName, targetBaseDir, scope, {
+            dryRun,
+            useCopy,
+            projectRoot,
+            homeDir
+          });
+
+      installed.push({
+        skillName: skillEntry.skillName,
+        destDir: result.destDir,
+        action: result.action,
+        links
+      });
+    }
+
+    if (installed.length === 0) {
+      console.log('No skills were installed.');
+      return;
+    }
+
+    if (!dryRun && scope === 'user') {
+      const lockPath = getExternalSkillLockPath(homeDir);
+      const existingLock = await readExternalSkillLock(homeDir);
+      const lockEntries = [];
+
+      if (existingLock.exists && !existingLock.healthy) {
+        const backupPath = `${lockPath}.backup-${Date.now()}`;
+        try {
+          await fs.copyFile(lockPath, backupPath);
+          console.log(`WARN: Existing lockfile is corrupted. Backed up to ${backupPath}`);
+          for (const issue of existingLock.issues) {
+            console.log(`  ${issue}`);
+          }
+        } catch {
+          console.log('WARN: Existing lockfile is corrupted and could not be backed up.');
+        }
+      }
+
+      if (existingLock.healthy) {
+        for (const [, entry] of existingLock.entriesByName) {
+          lockEntries.push(entry);
+        }
+      }
+
+      const resolvedUrl = sourceUrl(source);
+
+      for (const item of installed) {
+        const existing = lockEntries.find((e) => e.skillName === item.skillName);
+        const now = new Date().toISOString();
+        let folderHash = null;
+        try {
+          folderHash = await computeSkillFolderHash(item.destDir);
+        } catch {
+          // Non-fatal
+        }
+
+        const entry = {
+          skillName: item.skillName,
+          source: sourceArg,
+          sourceType: source.type,
+          sourceUrl: resolvedUrl,
+          skillPath: `${item.skillName}/SKILL.md`,
+          skillFolderHash: folderHash,
+          installedAt: existing?.installedAt || now,
+          updatedAt: now,
+          pluginName: null
+        };
+
+        const idx = lockEntries.findIndex((e) => e.skillName === item.skillName);
+        if (idx >= 0) {
+          lockEntries[idx] = entry;
+        } else {
+          lockEntries.push(entry);
+        }
+      }
+
+      await writeExternalSkillLock(lockPath, lockEntries);
+    }
+
+    if (!dryRun && scope === 'project') {
+      const resolvedUrl = sourceUrl(source);
+
+      for (const item of installed) {
+        let folderHash = null;
+        try {
+          folderHash = await computeSkillFolderHash(item.destDir);
+        } catch {
+          // Non-fatal
+        }
+
+        await updateLockfileEntry(projectRoot, item.skillName, {
+          source: sourceArg,
+          sourceType: source.type,
+          sourceUrl: resolvedUrl,
+          computedHash: folderHash,
+          skillPath: path.relative(projectRoot, item.destDir)
+        });
+      }
+    }
+
+    if (!dryRun) {
+      const { registryPath, registry } = await loadRegistry(flags.registry);
+      const now = new Date().toISOString();
+      const resolvedUrl = sourceUrl(source);
+
+      for (const item of installed) {
+        const skillMdPath = path.join(item.destDir, 'SKILL.md');
+        const raw = await fs.readFile(skillMdPath, 'utf8');
+        const { metadata, normalized } = parseContentForFormat('skill-md', raw, skillMdPath);
+        const manifest = await buildStructureManifest(skillMdPath, 'skill-md');
+        const canonicalPath = normalizePath(skillMdPath);
+        const key = makeCanonicalKey(canonicalPath);
+
+        const existing = registry.items[key];
+        const incoming = makeRegistryItemFromUnknown(
+          {
+            key,
+            canonicalPath,
+            realPath: canonicalPath,
+            sourcePath: canonicalPath,
+            id: item.skillName,
+            name: normalized.name,
+            description: normalized.description,
+            normalized,
+            metadata,
+            hash: manifest.manifestHash,
+            manifestHash: manifest.manifestHash,
+            structureManifest: manifest,
+            state: 'active',
+            createdAt: existing?.createdAt || now,
+            updatedAt: now,
+            firstSeenAt: existing?.firstSeenAt || now,
+            lastSeenAt: now,
+            externalSource: sourceArg,
+            externalSourceType: source.type,
+            externalSourceUrl: resolvedUrl
+          },
+          ''
+        );
+        registry.items[key] = mergeRegistryItems(existing, incoming);
+      }
+
+      registry.updatedAt = now;
+      rebuildRegistryIndexes(registry);
+      await writeJson(registryPath, registry);
+    }
+
+    if (dryRun) {
+      console.log(`\nDry run complete. ${installed.length} skill(s) would be installed to ${targetBaseDir}`);
+    } else {
+      console.log(`\nInstalled ${installed.length} skill(s) to ${targetBaseDir}:`);
+      for (const item of installed) {
+        console.log(`  - ${item.skillName} -> ${item.destDir}`);
+        for (const link of item.links) {
+          console.log(`    symlink: ${link.agent} -> ${link.path}`);
+        }
+      }
+    }
+  } finally {
+    if (tmpDir) {
+      try {
+        fsSync.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+    }
   }
 }
 
@@ -4362,6 +4847,160 @@ async function cmdRemove(flags, args, context) {
   );
 }
 
+// ── node_modules skill discovery + sync ─────────────────────────────────
+
+const NODE_MODULES_SKIP_DIRS = new Set(['.bin', '.cache', '.package-lock.json', '.staging', '.yarn-integrity']);
+const NODE_MODULES_SKILL_SEARCH_LOCATIONS = ['', 'skills', '.agents/skills'];
+
+async function discoverNodeModuleSkills(projectRoot) {
+  const nodeModulesDir = path.join(projectRoot, 'node_modules');
+  const results = [];
+
+  let topEntries;
+  try {
+    topEntries = await fs.readdir(nodeModulesDir, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === 'ENOENT') return results;
+    throw err;
+  }
+
+  const packageDirs = [];
+
+  for (const entry of topEntries) {
+    if (!entry.isDirectory()) continue;
+    if (NODE_MODULES_SKIP_DIRS.has(entry.name)) continue;
+
+    if (entry.name.startsWith('@')) {
+      let scopedEntries;
+      try {
+        scopedEntries = await fs.readdir(path.join(nodeModulesDir, entry.name), { withFileTypes: true });
+      } catch { continue; }
+      for (const sub of scopedEntries) {
+        if (sub.isDirectory()) {
+          packageDirs.push({ packageName: `${entry.name}/${sub.name}`, dir: path.join(nodeModulesDir, entry.name, sub.name) });
+        }
+      }
+    } else {
+      packageDirs.push({ packageName: entry.name, dir: path.join(nodeModulesDir, entry.name) });
+    }
+  }
+
+  for (const { packageName, dir } of packageDirs) {
+    for (const searchLoc of NODE_MODULES_SKILL_SEARCH_LOCATIONS) {
+      const searchDir = searchLoc ? path.join(dir, searchLoc) : dir;
+      const skillMdPath = path.join(searchDir, 'SKILL.md');
+
+      let exists;
+      try {
+        await fs.access(skillMdPath);
+        exists = true;
+      } catch { exists = false; }
+
+      if (!exists) continue;
+
+      const files = [];
+      try {
+        const items = await fs.readdir(searchDir, { withFileTypes: true });
+        for (const item of items) {
+          if (item.isFile()) files.push(item.name);
+        }
+      } catch { continue; }
+
+      const skillName = inferNameFromPath(skillMdPath);
+
+      results.push({
+        packageName,
+        skillName,
+        skillPath: searchDir,
+        files
+      });
+    }
+  }
+
+  return results;
+}
+
+async function cmdSyncFromNodeModules(flags, context) {
+  const projectRoot = context.projectRoot;
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'project';
+
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw new Error(`Invalid --scope value "${scope}". Use --scope user|project.`);
+  }
+
+  const discovered = await discoverNodeModuleSkills(projectRoot);
+
+  if (discovered.length === 0) {
+    console.log('No skills found in node_modules.');
+    return;
+  }
+
+  console.log(`Discovered ${discovered.length} skill(s) in node_modules.`);
+
+  const lockData = await readProjectLockfile(projectRoot);
+
+  const canonicalBase = resolveTemplatePath(getCanonicalSkillsPathTemplate(scope), { projectRoot });
+
+  const counters = { discovered: discovered.length, skipped: 0, installed: 0, updated: 0 };
+  const details = [];
+
+  for (const skill of discovered) {
+    const currentHash = await computeSkillFolderHash(skill.skillPath);
+    const lockEntry = lockData.skills[skill.skillName];
+    const previousHash = lockEntry?.computedHash;
+
+    if (previousHash && previousHash === currentHash) {
+      counters.skipped += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action: 'up to date' });
+      continue;
+    }
+
+    const isUpdate = Boolean(previousHash);
+    const destDir = path.join(canonicalBase, skill.skillName);
+
+    if (dryRun) {
+      const action = isUpdate ? 'would update' : 'would install';
+      counters[isUpdate ? 'updated' : 'installed'] += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+      continue;
+    }
+
+    await fs.mkdir(destDir, { recursive: true });
+
+    for (const fileName of skill.files) {
+      const srcFile = path.join(skill.skillPath, fileName);
+      const destFile = path.join(destDir, fileName);
+      const content = await fs.readFile(srcFile, 'utf8');
+      await writeFileAtomic(destFile, content);
+    }
+
+    await updateLockfileEntry(projectRoot, skill.skillName, {
+      source: skill.packageName,
+      sourceType: 'node_modules',
+      computedHash: currentHash,
+      skillPath: path.relative(projectRoot, destDir)
+    });
+
+    const action = isUpdate ? 'updated' : 'installed';
+    counters[action] += 1;
+    details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+  }
+
+  if (dryRun) {
+    console.log('\nDry run — no files written.\n');
+  }
+
+  for (const d of details) {
+    const dest = d.dest ? ` -> ${d.dest}` : '';
+    console.log(`  ${d.action}: ${d.skillName} (from ${d.packageName})${dest}`);
+  }
+
+  console.log(
+    `\nSummary: discovered=${counters.discovered} skipped=${counters.skipped} installed=${counters.installed} updated=${counters.updated}`
+  );
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -4417,6 +5056,10 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     await cmdSync(flags, context);
     return;
   }
+  if (command === 'add') {
+    await cmdAdd(flags, args, context);
+    return;
+  }
   if (command === 'doctor') {
     await cmdDoctor(flags, context);
     return;
@@ -4439,6 +5082,7 @@ export {
   computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
+  discoverNodeModuleSkills,
   getOwnerRepo,
   normalizeRegistry,
   normalizeConfigV2,
@@ -4453,5 +5097,6 @@ export {
   pickPreferredCanonicalPath,
   sanitizeSubpath,
   updateLockfileEntry,
+  writeExternalSkillLock,
   writeProjectLockfile
 };
