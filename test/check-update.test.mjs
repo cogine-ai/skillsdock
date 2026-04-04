@@ -36,11 +36,10 @@ async function initGitRepo(dir) {
 
 function makeFetchFn(treeResponse) {
   return async (url, opts) => {
-    return {
-      ok: true,
-      status: 200,
-      json: async () => treeResponse
-    };
+    if (url.includes('/git/trees/')) {
+      return { ok: true, status: 200, json: async () => treeResponse };
+    }
+    return { ok: true, status: 200, json: async () => ({ default_branch: 'main' }) };
   };
 }
 
@@ -240,14 +239,13 @@ test('checkSkillUpdates skips non-GitHub sources', async () => {
 });
 
 test('checkSkillUpdates batches same-repo skills into one API call', async () => {
-  let fetchCount = 0;
+  let treeCallCount = 0;
   const countingFetch = async (url, opts) => {
-    fetchCount++;
-    return {
-      ok: true,
-      status: 200,
-      json: async () => MOCK_TREE
-    };
+    if (url.includes('/git/trees/')) {
+      treeCallCount++;
+      return { ok: true, status: 200, json: async () => MOCK_TREE };
+    }
+    return { ok: true, status: 200, json: async () => ({ default_branch: 'main' }) };
   };
 
   const lockSkills = {
@@ -272,7 +270,7 @@ test('checkSkillUpdates batches same-repo skills into one API call', async () =>
     token: null
   });
 
-  assert.equal(fetchCount, 1, 'Should only make one API call for same repo');
+  assert.equal(treeCallCount, 1, 'Should only make one tree API call for same repo');
 });
 
 test('checkSkillUpdates handles network errors gracefully', async () => {

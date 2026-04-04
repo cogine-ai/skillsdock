@@ -5059,8 +5059,30 @@ function resolveGitHubToken() {
 /*  check / update — skill freshness detection via GitHub Trees API    */
 /* ------------------------------------------------------------------ */
 
+async function fetchRepoDefaultBranch(owner, repo, token, fetchFn) {
+  const url = `https://api.github.com/repos/${owner}/${repo}`;
+  const headers = { 'User-Agent': 'skillsdock-cli', Accept: 'application/vnd.github+json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const doFetch = fetchFn || globalThis.fetch;
+  const resp = await doFetch(url, { headers });
+  if (resp.status === 403 || resp.status === 429) {
+    const err = new Error('GitHub API rate limit reached. Set GITHUB_TOKEN for higher limits.');
+    err.rateLimited = true;
+    throw err;
+  }
+  if (!resp.ok) {
+    throw new Error(`GitHub API returned ${resp.status} for ${owner}/${repo}`);
+  }
+  const data = await resp.json();
+  return data.default_branch || 'main';
+}
+
 async function fetchGitHubTree(owner, repo, branch, token, fetchFn) {
-  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch || 'main'}?recursive=1`;
+  let ref = branch;
+  if (!ref) {
+    ref = await fetchRepoDefaultBranch(owner, repo, token, fetchFn);
+  }
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`;
   const headers = { 'User-Agent': 'skillsdock-cli', Accept: 'application/vnd.github+json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const doFetch = fetchFn || globalThis.fetch;
@@ -5108,17 +5130,23 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
   if (registryItems && typeof registryItems === 'object') {
     for (const [key, item] of Object.entries(registryItems)) {
       if (item.externalSourceUrl && item.externalHash) {
-        const existsInLock = Object.values(lockSkills).some(
-          (e) => e.sourceUrl === item.externalSourceUrl && e.computedHash
+        const registrySkillId = item.id || key;
+        const registrySkillPath = item.externalSkillPath || item.skillPath || '';
+        const existsInLock = Object.entries(lockSkills).some(
+          ([lockName, e]) =>
+            e.sourceUrl === item.externalSourceUrl &&
+            e.computedHash &&
+            (lockName === registrySkillId || e.skillPath === registrySkillPath)
         );
         if (!existsInLock) {
           allEntries.push({
-            name: item.id || key,
+            name: registrySkillId,
             entry: {
               source: item.externalSource,
               sourceType: item.externalSourceType,
               sourceUrl: item.externalSourceUrl,
-              computedHash: item.externalHash
+              computedHash: item.externalHash,
+              skillPath: registrySkillPath
             },
             scope: 'registry'
           });
@@ -5153,15 +5181,17 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
       continue;
     }
 
-    if (!repoGroups.has(ownerRepo)) {
-      repoGroups.set(ownerRepo, { parsed, skills: [] });
+    const groupKey = `${ownerRepo}#${parsed.branch || ''}`;
+    if (!repoGroups.has(groupKey)) {
+      repoGroups.set(groupKey, { parsed, ownerRepo, skills: [] });
     }
-    repoGroups.get(ownerRepo).skills.push({ name, entry, parsed, scope: item.scope });
+    repoGroups.get(groupKey).skills.push({ name, entry, parsed, scope: item.scope });
   }
 
   skipped.push(...noSource);
 
-  for (const [ownerRepo, group] of repoGroups) {
+  for (const [, group] of repoGroups) {
+    const { ownerRepo } = group;
     let treeData;
     try {
       treeData = await fetchGitHubTree(
@@ -5299,9 +5329,17 @@ async function cmdUpdate(flags, args, context) {
     return;
   }
 
-  const result = await checkSkillUpdates(lockData.skills, registryItems, { fetchFn });
+  const checkSkills = scope === 'project' ? lockData.skills : {};
+  const checkRegistry = scope === 'user' ? registryItems : {};
+  const result = await checkSkillUpdates(checkSkills, checkRegistry, { fetchFn });
 
-  if (result.updatesAvailable.length === 0) {
+  const scopeFiltered = result.updatesAvailable.filter((u) => {
+    if (scope === 'project') return u.scope === 'project';
+    if (scope === 'user') return u.scope === 'registry';
+    return true;
+  });
+
+  if (scopeFiltered.length === 0) {
     const msg = `${result.upToDate.length} skill${result.upToDate.length === 1 ? '' : 's'} already up to date`;
     if (result.skipped.length > 0) {
       console.log(`${msg}, ${result.skipped.length} skipped.`);
@@ -5312,8 +5350,8 @@ async function cmdUpdate(flags, args, context) {
   }
 
   if (dryRun) {
-    console.log(`[dry-run] Would update ${result.updatesAvailable.length} skill(s):`);
-    for (const u of result.updatesAvailable) {
+    console.log(`[dry-run] Would update ${scopeFiltered.length} skill(s):`);
+    for (const u of scopeFiltered) {
       console.log(`  - ${u.name} (${u.source})`);
     }
     console.log(`\nUpdated 0 skills, ${result.upToDate.length} already up to date, ${result.skipped.length} skipped`);
@@ -5327,7 +5365,7 @@ async function cmdUpdate(flags, args, context) {
 
   let updatedCount = 0;
 
-  for (const u of result.updatesAvailable) {
+  for (const u of scopeFiltered) {
     const entry = u.entry;
     let source;
     try {
@@ -5349,23 +5387,68 @@ async function cmdUpdate(flags, args, context) {
         continue;
       }
 
-      await installSkillToTarget(match, targetBaseDir, { dryRun: false, useCopy: true });
+      const stagingDir = path.join(targetBaseDir, `.staging-${u.name}-${process.pid}-${Date.now()}`);
+      await installSkillToTarget(match, stagingDir, { dryRun: false, useCopy: true });
 
-      const destDir = path.join(targetBaseDir, u.name);
+      const stagedSkillDir = path.join(stagingDir, u.name);
       let folderHash = null;
       try {
-        folderHash = await computeSkillFolderHash(destDir);
+        folderHash = await computeSkillFolderHash(stagedSkillDir);
       } catch {
         // Non-fatal
       }
 
-      await updateLockfileEntry(projectRoot, u.name, {
-        source: entry.source,
-        sourceType: entry.sourceType,
-        sourceUrl: entry.sourceUrl,
-        computedHash: folderHash,
-        skillPath: path.relative(projectRoot, destDir)
-      });
+      const destDir = path.join(targetBaseDir, u.name);
+      try {
+        await fs.rm(destDir, { recursive: true, force: true });
+      } catch (rmErr) {
+        if (rmErr?.code !== 'ENOENT') throw rmErr;
+      }
+      await fs.rename(stagedSkillDir, destDir);
+      try {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      } catch {
+        // staging parent cleanup, best-effort
+      }
+
+      if (scope === 'project') {
+        await updateLockfileEntry(projectRoot, u.name, {
+          source: entry.source,
+          sourceType: entry.sourceType,
+          sourceUrl: entry.sourceUrl,
+          computedHash: folderHash,
+          skillPath: path.relative(projectRoot, destDir)
+        });
+      } else {
+        const lockPath = getExternalSkillLockPath(homeDir);
+        const existingLock = await readExternalSkillLock(homeDir);
+        const lockEntries = [];
+        if (existingLock.healthy) {
+          for (const [, le] of existingLock.entriesByName) {
+            lockEntries.push(le);
+          }
+        }
+        const now = new Date().toISOString();
+        const existing = lockEntries.find((e) => e.skillName === u.name);
+        const newEntry = {
+          skillName: u.name,
+          source: entry.source,
+          sourceType: entry.sourceType,
+          sourceUrl: entry.sourceUrl,
+          skillPath: `${u.name}/SKILL.md`,
+          skillFolderHash: folderHash,
+          installedAt: existing?.installedAt || now,
+          updatedAt: now,
+          pluginName: existing?.pluginName || null
+        };
+        const idx = lockEntries.findIndex((e) => e.skillName === u.name);
+        if (idx >= 0) {
+          lockEntries[idx] = newEntry;
+        } else {
+          lockEntries.push(newEntry);
+        }
+        await writeExternalSkillLock(lockPath, lockEntries);
+      }
 
       updatedCount++;
       console.log(`  Updated: ${u.name} (${u.source})`);

@@ -275,7 +275,7 @@ GITHUB_TOKEN=ghp_xxx skillsdock check
 
 ### Text Output
 
-```
+```text
 ✓ 3 skills up to date
 ⚡ 2 skills have updates available:
   - typescript-skill (vercel-labs/agent-skills)
