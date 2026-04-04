@@ -4,6 +4,25 @@
 
 ### Added
 
+- `skillsdock check [--json]` — detect available updates for installed skills via the GitHub Trees API:
+  - Reads both `skills-lock.json` and the SkillsDock registry for tracked skills
+  - Uses GitHub Trees API (`GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1`) with one API call per repository (batches skills from the same repo)
+  - Computes a SHA-256 fingerprint from the remote tree to compare against the locally stored hash
+  - Text output shows up-to-date count, skills with updates, and skipped skills
+  - `--json` outputs machine-readable JSON (no ANSI escape codes)
+  - Skips non-GitHub sources (local, GitLab) with a reason in the report
+  - Graceful degradation on network errors and API rate limits
+- `skillsdock update [--scope user|project] [--dry-run]` — automatically re-install skills that have available updates:
+  - Runs the same freshness detection as `check`
+  - Re-clones and re-installs outdated skills using `installSkillToTarget()`
+  - Updates `skills-lock.json` with new content hashes after installation
+  - `--dry-run` previews which skills would be updated without writing files
+  - `--scope user|project` controls the installation target (default: `project`)
+  - Prints an update summary: updated count, already up to date, skipped
+- `resolveGitHubToken()` — resolves a GitHub token with priority: `GITHUB_TOKEN` env var > `GH_TOKEN` env var > `gh auth token` CLI fallback; unauthenticated requests still work (60 req/hr)
+- Exported `installSkillToTarget()` for reuse in `cmdUpdate`
+- Test suite `test/check-update.test.mjs` covering token resolution, update detection, batching, network errors, rate limits, JSON output, dry-run, CLI integration, and mixed scenarios (26 tests)
+
 - `skillsdock remove <selector>` — new command to clean up installed skill files, symlinks, and registry/lockfile entries:
   - Resolves skills by id, key, or path via `resolveSelectorMatches()`
   - Deletes canonical skill directories under `.agents/skills/`
