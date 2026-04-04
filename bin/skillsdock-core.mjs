@@ -4,7 +4,7 @@ import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
@@ -556,6 +556,8 @@ function mapExternalSkillLockEntry(skillName, entry) {
     sourceUrl: normalizeOptionalString(entry.sourceUrl),
     skillPath: normalizeOptionalString(entry.skillPath),
     skillFolderHash: normalizeOptionalString(entry.skillFolderHash),
+    treeSha: normalizeOptionalString(entry.treeSha),
+    repoSubpath: normalizeOptionalString(entry.repoSubpath),
     installedAt: normalizeIsoOrNull(entry.installedAt),
     updatedAt: normalizeIsoOrNull(entry.updatedAt),
     pluginName: normalizePluginName(entry.pluginName)
@@ -632,7 +634,7 @@ async function readExternalSkillLock(homeDir = HOME) {
 async function writeExternalSkillLock(lockPath, entries) {
   const skills = {};
   for (const entry of entries) {
-    skills[entry.skillName] = {
+    const obj = {
       source: entry.source || null,
       sourceType: entry.sourceType || null,
       sourceUrl: entry.sourceUrl || null,
@@ -642,6 +644,9 @@ async function writeExternalSkillLock(lockPath, entries) {
       updatedAt: entry.updatedAt || null,
       pluginName: entry.pluginName || null
     };
+    if (entry.treeSha) obj.treeSha = entry.treeSha;
+    if (entry.repoSubpath) obj.repoSubpath = entry.repoSubpath;
+    skills[entry.skillName] = obj;
   }
   const data = {
     version: EXTERNAL_SKILL_LOCK_VERSION,
@@ -1900,6 +1905,8 @@ Usage:
   skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
   skillsdock find [query] [--json]
   skillsdock sync --from node_modules [--scope user|project] [--dry-run]
+  skillsdock check [--json]
+  skillsdock update [--scope user|project] [--dry-run]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
   skillsdock version
 
@@ -1918,6 +1925,10 @@ Examples:
   skillsdock find typescript
   skillsdock find react --json
   skillsdock sync --from node_modules --dry-run
+  skillsdock check
+  skillsdock check --json
+  skillsdock update --scope project
+  skillsdock update --dry-run
 `);
 }
 
@@ -4142,6 +4153,8 @@ async function cmdAdd(flags, args, context) {
       );
     }
 
+    const repoRootDir = tmpDir ? path.join(tmpDir, 'repo') : null;
+
     for (const skillEntry of filtered) {
       try {
         parseContentForFormat('skill-md', await fs.readFile(skillEntry.skillPath, 'utf8'), skillEntry.skillPath);
@@ -4150,6 +4163,10 @@ async function cmdAdd(flags, args, context) {
         continue;
       }
 
+      const repoRelativeDir = repoRootDir
+        ? path.relative(repoRootDir, skillEntry.skillDir)
+        : '';
+
       if (dryRun) {
         const destDir = path.join(targetBaseDir, skillEntry.skillName);
         console.log(`[dry-run] Would install ${skillEntry.skillName} -> ${destDir}`);
@@ -4157,7 +4174,8 @@ async function cmdAdd(flags, args, context) {
           skillName: skillEntry.skillName,
           destDir,
           action: 'copy',
-          links: []
+          links: [],
+          repoRelativeDir
         });
         continue;
       }
@@ -4177,7 +4195,8 @@ async function cmdAdd(flags, args, context) {
         skillName: skillEntry.skillName,
         destDir: result.destDir,
         action: result.action,
-        links
+        links,
+        repoRelativeDir
       });
     }
 
@@ -4222,6 +4241,15 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
+        let perSkillTreeSha = null;
+        if (repoRootDir && source.type === 'github') {
+          try {
+            perSkillTreeSha = computeLocalTreeFingerprint(repoRootDir, item.repoRelativeDir || '');
+          } catch {
+            // Non-fatal
+          }
+        }
+
         const entry = {
           skillName: item.skillName,
           source: sourceArg,
@@ -4233,6 +4261,8 @@ async function cmdAdd(flags, args, context) {
           updatedAt: now,
           pluginName: null
         };
+        if (perSkillTreeSha) entry.treeSha = perSkillTreeSha;
+        if (item.repoRelativeDir) entry.repoSubpath = item.repoRelativeDir;
 
         const idx = lockEntries.findIndex((e) => e.skillName === item.skillName);
         if (idx >= 0) {
@@ -4247,6 +4277,7 @@ async function cmdAdd(flags, args, context) {
 
     if (!dryRun && scope === 'project') {
       const resolvedUrl = sourceUrl(source);
+      const repoDir = tmpDir ? path.join(tmpDir, 'repo') : null;
 
       for (const item of installed) {
         let folderHash = null;
@@ -4256,13 +4287,26 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
-        await updateLockfileEntry(projectRoot, item.skillName, {
+        let perSkillTreeSha = null;
+        if (repoDir && source.type === 'github') {
+          try {
+            const skillRepoPath = item.repoRelativeDir || '';
+            perSkillTreeSha = computeLocalTreeFingerprint(repoDir, skillRepoPath);
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        const lockEntry = {
           source: sourceArg,
           sourceType: source.type,
           sourceUrl: resolvedUrl,
           computedHash: folderHash,
-          skillPath: path.relative(projectRoot, item.destDir)
-        });
+          skillPath: path.relative(projectRoot, item.destDir),
+          repoSubpath: item.repoRelativeDir || null
+        };
+        if (perSkillTreeSha) lockEntry.treeSha = perSkillTreeSha;
+        await updateLockfileEntry(projectRoot, item.skillName, lockEntry);
       }
     }
 
@@ -5033,6 +5077,553 @@ async function cmdSyncFromNodeModules(flags, context) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  GitHub Token Resolution                                            */
+/* ------------------------------------------------------------------ */
+
+function resolveGitHubToken() {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  if (process.env.GH_TOKEN) return process.env.GH_TOKEN;
+  try {
+    const result = spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 5000 });
+    if (result.status === 0 && result.stdout) {
+      const token = result.stdout.trim();
+      if (token.length > 0) return token;
+    }
+  } catch {
+    // gh CLI not available
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  check / update — skill freshness detection via GitHub Trees API    */
+/* ------------------------------------------------------------------ */
+
+async function fetchRepoDefaultBranch(owner, repo, token, fetchFn) {
+  const url = `https://api.github.com/repos/${owner}/${repo}`;
+  const headers = { 'User-Agent': 'skillsdock-cli', Accept: 'application/vnd.github+json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const doFetch = fetchFn || globalThis.fetch;
+  const resp = await doFetch(url, { headers });
+  if (resp.status === 403 || resp.status === 429) {
+    const err = new Error('GitHub API rate limit reached. Set GITHUB_TOKEN for higher limits.');
+    err.rateLimited = true;
+    throw err;
+  }
+  if (!resp.ok) {
+    throw new Error(`GitHub API returned ${resp.status} for ${owner}/${repo}`);
+  }
+  const data = await resp.json();
+  return data.default_branch || 'main';
+}
+
+async function fetchGitHubTree(owner, repo, branch, token, fetchFn) {
+  let ref = branch;
+  if (!ref) {
+    ref = await fetchRepoDefaultBranch(owner, repo, token, fetchFn);
+  }
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`;
+  const headers = { 'User-Agent': 'skillsdock-cli', Accept: 'application/vnd.github+json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const doFetch = fetchFn || globalThis.fetch;
+  const resp = await doFetch(url, { headers });
+  if (resp.status === 403 || resp.status === 429) {
+    const err = new Error('GitHub API rate limit reached. Set GITHUB_TOKEN for higher limits.');
+    err.rateLimited = true;
+    throw err;
+  }
+  if (!resp.ok) {
+    throw new Error(`GitHub API returned ${resp.status} for ${owner}/${repo}`);
+  }
+  return resp.json();
+}
+
+function buildTreeFingerprint(treeData, subpath) {
+  const prefix = subpath ? (subpath.endsWith('/') ? subpath : subpath + '/') : '';
+  const relevant = treeData.tree
+    .filter((entry) => {
+      if (entry.type !== 'blob') return false;
+      if (!prefix) return true;
+      return entry.path === subpath || entry.path.startsWith(prefix);
+    });
+  relevant.sort((a, b) => a.path.localeCompare(b.path));
+  const hash = crypto.createHash('sha256');
+  for (const entry of relevant) {
+    hash.update(entry.path);
+    hash.update(entry.sha || '');
+  }
+  return hash.digest('hex');
+}
+
+function computeLocalTreeFingerprint(repoDir, subpath) {
+  const result = spawnSync('git', ['ls-tree', '-r', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+    timeout: 10000
+  });
+  if (result.status !== 0) return null;
+
+  const prefix = subpath ? (subpath.endsWith('/') ? subpath : subpath + '/') : '';
+  const lines = result.stdout.trim().split('\n').filter(Boolean);
+  const entries = [];
+  for (const line of lines) {
+    const match = line.match(/^\d+ blob ([0-9a-f]+)\t(.+)$/);
+    if (!match) continue;
+    const [, sha, filePath] = match;
+    if (prefix && filePath !== subpath && !filePath.startsWith(prefix)) continue;
+    entries.push({ path: filePath, sha });
+  }
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+  const hash = crypto.createHash('sha256');
+  for (const entry of entries) {
+    hash.update(entry.path);
+    hash.update(entry.sha);
+  }
+  return hash.digest('hex');
+}
+
+async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
+  const { fetchFn, userLockSkills } = options;
+  const token = options.token !== undefined ? options.token : resolveGitHubToken();
+
+  const upToDate = [];
+  const updatesAvailable = [];
+  const skipped = [];
+
+  const allEntries = [];
+
+  for (const [name, entry] of Object.entries(lockSkills)) {
+    allEntries.push({ name, entry, scope: 'project' });
+  }
+
+  if (userLockSkills && typeof userLockSkills === 'object') {
+    for (const [name, entry] of Object.entries(userLockSkills)) {
+      const existsAlready = allEntries.some((e) => e.name === name);
+      if (!existsAlready) {
+        allEntries.push({ name, entry, scope: 'registry' });
+      }
+    }
+  }
+
+  if (registryItems && typeof registryItems === 'object') {
+    for (const [key, item] of Object.entries(registryItems)) {
+      if (item.externalSourceUrl && item.externalHash) {
+        const registrySkillId = item.id || key;
+        const registrySkillPath = item.externalSkillPath || item.skillPath || '';
+        const alreadyTracked = allEntries.some(
+          (e) => e.name === registrySkillId || (e.entry.skillPath && e.entry.skillPath === registrySkillPath)
+        );
+        if (!alreadyTracked) {
+          allEntries.push({
+            name: registrySkillId,
+            entry: {
+              source: item.externalSource,
+              sourceType: item.externalSourceType,
+              sourceUrl: item.externalSourceUrl,
+              computedHash: item.externalHash,
+              skillPath: registrySkillPath
+            },
+            scope: 'registry'
+          });
+        }
+      }
+    }
+  }
+
+  const repoGroups = new Map();
+  const noSource = [];
+
+  for (const item of allEntries) {
+    const { name, entry } = item;
+    if (!entry.sourceUrl) {
+      noSource.push({ name, reason: 'no source URL' });
+      continue;
+    }
+    if (entry.sourceType !== 'github') {
+      skipped.push({ name, reason: `non-GitHub source (${entry.sourceType || 'unknown'})` });
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = parseSource(entry.source || entry.sourceUrl);
+    } catch {
+      skipped.push({ name, reason: 'unparseable source' });
+      continue;
+    }
+    const ownerRepo = getOwnerRepo(parsed);
+    if (!ownerRepo) {
+      skipped.push({ name, reason: 'no owner/repo' });
+      continue;
+    }
+
+    const groupKey = `${ownerRepo}#${parsed.branch || ''}`;
+    if (!repoGroups.has(groupKey)) {
+      repoGroups.set(groupKey, { parsed, ownerRepo, skills: [] });
+    }
+    repoGroups.get(groupKey).skills.push({ name, entry, parsed, scope: item.scope });
+  }
+
+  skipped.push(...noSource);
+
+  for (const [, group] of repoGroups) {
+    const { ownerRepo } = group;
+    let treeData;
+    try {
+      treeData = await fetchGitHubTree(
+        group.parsed.owner,
+        group.parsed.repo,
+        group.parsed.branch,
+        token,
+        fetchFn
+      );
+    } catch (err) {
+      if (err.rateLimited) {
+        for (const skill of group.skills) {
+          skipped.push({ name: skill.name, reason: 'rate limited' });
+        }
+        console.warn(err.message);
+        continue;
+      }
+      for (const skill of group.skills) {
+        skipped.push({ name: skill.name, reason: `network error: ${err.message}` });
+      }
+      console.warn(`Warning: Could not fetch tree for ${ownerRepo}: ${err.message}`);
+      continue;
+    }
+
+    for (const skill of group.skills) {
+      const subpath = skill.entry.repoSubpath || skill.parsed.subpath || '';
+      const remoteFingerprint = buildTreeFingerprint(treeData, subpath);
+      const localTreeSha = skill.entry.treeSha;
+
+      if (!localTreeSha) {
+        updatesAvailable.push({
+          name: skill.name,
+          source: ownerRepo,
+          currentHash: null,
+          remoteHash: remoteFingerprint,
+          entry: skill.entry,
+          scope: skill.scope
+        });
+      } else if (remoteFingerprint === localTreeSha) {
+        upToDate.push({ name: skill.name, source: ownerRepo });
+      } else {
+        updatesAvailable.push({
+          name: skill.name,
+          source: ownerRepo,
+          currentHash: localTreeSha,
+          remoteHash: remoteFingerprint,
+          entry: skill.entry,
+          scope: skill.scope
+        });
+      }
+    }
+  }
+
+  return { upToDate, updatesAvailable, skipped };
+}
+
+async function cmdCheck(flags, context) {
+  const jsonMode = Boolean(flags.json);
+  const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
+  const fetchFn = context._fetchFn;
+
+  const lockData = await readProjectLockfile(projectRoot);
+
+  let registryItems = {};
+  try {
+    const { registry } = await loadRegistry(flags.registry);
+    registryItems = registry.items || {};
+  } catch {
+    // Registry not available
+  }
+
+  let userLockSkills = {};
+  try {
+    const extLock = await readExternalSkillLock(homeDir);
+    if (extLock.healthy && extLock.entriesByName.size > 0) {
+      for (const [name, entry] of extLock.entriesByName) {
+        if (entry.sourceUrl && entry.sourceType === 'github') {
+          userLockSkills[name] = {
+            source: entry.source,
+            sourceType: entry.sourceType,
+            sourceUrl: entry.sourceUrl,
+            computedHash: entry.skillFolderHash,
+            treeSha: entry.treeSha || null,
+            repoSubpath: entry.repoSubpath || null,
+            skillPath: entry.skillPath
+          };
+        }
+      }
+    }
+  } catch {
+    // External lock not available
+  }
+
+  const result = await checkSkillUpdates(lockData.skills, registryItems, { fetchFn, userLockSkills });
+
+  if (
+    Object.keys(lockData.skills).length === 0 &&
+    Object.keys(registryItems).length === 0 &&
+    Object.keys(userLockSkills).length === 0
+  ) {
+    if (jsonMode) {
+      console.log(JSON.stringify({ upToDate: [], updatesAvailable: [], skipped: [] }, null, 2));
+    } else {
+      console.log("No tracked skills found. Use 'skillsdock add' to install skills first.");
+    }
+    return result;
+  }
+
+  if (jsonMode) {
+    const output = {
+      upToDate: result.upToDate,
+      updatesAvailable: result.updatesAvailable.map((u) => ({
+        name: u.name,
+        source: u.source,
+        currentHash: u.currentHash,
+        remoteHash: u.remoteHash
+      })),
+      skipped: result.skipped
+    };
+    console.log(JSON.stringify(output, null, 2));
+  } else {
+    if (result.upToDate.length > 0) {
+      console.log(`\u2713 ${result.upToDate.length} skill${result.upToDate.length === 1 ? '' : 's'} up to date`);
+    }
+    if (result.updatesAvailable.length > 0) {
+      console.log(
+        `\u26A1 ${result.updatesAvailable.length} skill${result.updatesAvailable.length === 1 ? '' : 's'} ha${result.updatesAvailable.length === 1 ? 's' : 've'} updates available:`
+      );
+      for (const u of result.updatesAvailable) {
+        console.log(`  - ${u.name} (${u.source})`);
+      }
+    }
+    if (result.skipped.length > 0) {
+      console.log(
+        `\u23ED ${result.skipped.length} skill${result.skipped.length === 1 ? '' : 's'} skipped (${result.skipped.map((s) => s.reason).filter((v, i, a) => a.indexOf(v) === i).join(', ')})`
+      );
+    }
+    if (result.upToDate.length === 0 && result.updatesAvailable.length === 0 && result.skipped.length === 0) {
+      console.log("No tracked skills found. Use 'skillsdock add' to install skills first.");
+    }
+  }
+
+  return result;
+}
+
+async function cmdUpdate(flags, args, context) {
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'project';
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw makeCliError(`Invalid --scope "${scope}". Use --scope user|project.`);
+  }
+  const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
+  const fetchFn = context._fetchFn;
+
+  const lockData = await readProjectLockfile(projectRoot);
+
+  let registryItems = {};
+  try {
+    const { registry } = await loadRegistry(flags.registry);
+    registryItems = registry.items || {};
+  } catch {
+    // Registry not available
+  }
+
+  let userLockSkills = {};
+  try {
+    const extLock = await readExternalSkillLock(homeDir);
+    if (extLock.healthy && extLock.entriesByName.size > 0) {
+      for (const [name, entry] of extLock.entriesByName) {
+        if (entry.sourceUrl && entry.sourceType === 'github') {
+          userLockSkills[name] = {
+            source: entry.source,
+            sourceType: entry.sourceType,
+            sourceUrl: entry.sourceUrl,
+            computedHash: entry.skillFolderHash,
+            treeSha: entry.treeSha || null,
+            repoSubpath: entry.repoSubpath || null,
+            skillPath: entry.skillPath
+          };
+        }
+      }
+    }
+  } catch {
+    // External lock not available
+  }
+
+  if (
+    Object.keys(lockData.skills).length === 0 &&
+    Object.keys(registryItems).length === 0 &&
+    Object.keys(userLockSkills).length === 0
+  ) {
+    console.log("No tracked skills found. Use 'skillsdock add' to install skills first.");
+    return;
+  }
+
+  const checkSkills = scope === 'project' ? lockData.skills : {};
+  const checkRegistry = scope === 'user' ? registryItems : {};
+  const checkUserLock = scope === 'user' ? userLockSkills : {};
+  const result = await checkSkillUpdates(checkSkills, checkRegistry, { fetchFn, userLockSkills: checkUserLock });
+
+  const scopeFiltered = result.updatesAvailable.filter((u) => {
+    if (scope === 'project') return u.scope === 'project';
+    if (scope === 'user') return u.scope === 'registry';
+    return true;
+  });
+
+  if (scopeFiltered.length === 0) {
+    const msg = `${result.upToDate.length} skill${result.upToDate.length === 1 ? '' : 's'} already up to date`;
+    if (result.skipped.length > 0) {
+      console.log(`${msg}, ${result.skipped.length} skipped.`);
+    } else {
+      console.log(`${msg}.`);
+    }
+    return;
+  }
+
+  if (dryRun) {
+    console.log(`[dry-run] Would update ${scopeFiltered.length} skill(s):`);
+    for (const u of scopeFiltered) {
+      console.log(`  - ${u.name} (${u.source})`);
+    }
+    console.log(`\nUpdated 0 skills, ${result.upToDate.length} already up to date, ${result.skipped.length} skipped`);
+    return;
+  }
+
+  const targetBaseDir =
+    scope === 'project'
+      ? path.join(projectRoot, UNIVERSAL_CANONICAL_DIR)
+      : path.resolve(expandHomePath(`~/${UNIVERSAL_CANONICAL_DIR}`, homeDir));
+
+  let updatedCount = 0;
+
+  for (const u of scopeFiltered) {
+    const entry = u.entry;
+    let source;
+    try {
+      source = parseSource(entry.source || entry.sourceUrl);
+    } catch (err) {
+      console.warn(`Warning: Could not parse source for ${u.name}: ${err.message}`);
+      continue;
+    }
+
+    let tmpDir = null;
+    try {
+      tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'skillsdock-update-'));
+      const searchRoot = await cloneGitRepo(source, tmpDir);
+      const skills = await discoverSkillMdFiles(searchRoot);
+
+      const match = skills.find((s) => s.skillName === u.name);
+      if (!match) {
+        console.warn(`Warning: Skill "${u.name}" not found in re-cloned repository ${u.source}`);
+        continue;
+      }
+
+      const stagingDir = path.join(targetBaseDir, `.staging-${u.name}-${process.pid}-${Date.now()}`);
+      await installSkillToTarget(match, stagingDir, { dryRun: false, useCopy: true });
+
+      const stagedSkillDir = path.join(stagingDir, u.name);
+      let folderHash = null;
+      try {
+        folderHash = await computeSkillFolderHash(stagedSkillDir);
+      } catch {
+        // Non-fatal
+      }
+
+      let newTreeSha = null;
+      try {
+        const repoDir = path.join(tmpDir, 'repo');
+        const skillRepoSubpath = path.relative(repoDir, match.skillDir);
+        newTreeSha = computeLocalTreeFingerprint(repoDir, skillRepoSubpath);
+      } catch {
+        // Non-fatal
+      }
+
+      const destDir = path.join(targetBaseDir, u.name);
+      try {
+        await fs.rm(destDir, { recursive: true, force: true });
+      } catch (rmErr) {
+        if (rmErr?.code !== 'ENOENT') throw rmErr;
+      }
+      await fs.rename(stagedSkillDir, destDir);
+      try {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      } catch {
+        // staging parent cleanup, best-effort
+      }
+
+      if (scope === 'project') {
+        const repoDir = path.join(tmpDir, 'repo');
+        const lockEntry = {
+          source: entry.source,
+          sourceType: entry.sourceType,
+          sourceUrl: entry.sourceUrl,
+          computedHash: folderHash,
+          skillPath: path.relative(projectRoot, destDir),
+          repoSubpath: path.relative(repoDir, match.skillDir) || null
+        };
+        if (newTreeSha) lockEntry.treeSha = newTreeSha;
+        await updateLockfileEntry(projectRoot, u.name, lockEntry);
+      } else {
+        const lockPath = getExternalSkillLockPath(homeDir);
+        const existingLock = await readExternalSkillLock(homeDir);
+        const lockEntries = [];
+        if (existingLock.healthy) {
+          for (const [, le] of existingLock.entriesByName) {
+            lockEntries.push(le);
+          }
+        }
+        const now = new Date().toISOString();
+        const existing = lockEntries.find((e) => e.skillName === u.name);
+        const repoDir = path.join(tmpDir, 'repo');
+        const skillRepoSubpath = path.relative(repoDir, match.skillDir) || null;
+        const newEntry = {
+          skillName: u.name,
+          source: entry.source,
+          sourceType: entry.sourceType,
+          sourceUrl: entry.sourceUrl,
+          skillPath: `${u.name}/SKILL.md`,
+          skillFolderHash: folderHash,
+          installedAt: existing?.installedAt || now,
+          updatedAt: now,
+          pluginName: existing?.pluginName || null
+        };
+        if (newTreeSha) newEntry.treeSha = newTreeSha;
+        if (skillRepoSubpath) newEntry.repoSubpath = skillRepoSubpath;
+        const idx = lockEntries.findIndex((e) => e.skillName === u.name);
+        if (idx >= 0) {
+          lockEntries[idx] = newEntry;
+        } else {
+          lockEntries.push(newEntry);
+        }
+        await writeExternalSkillLock(lockPath, lockEntries);
+      }
+
+      updatedCount++;
+      console.log(`  Updated: ${u.name} (${u.source})`);
+    } catch (err) {
+      console.warn(`Warning: Failed to update ${u.name}: ${err.message}`);
+    } finally {
+      if (tmpDir) {
+        try {
+          fsSync.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      }
+    }
+  }
+
+  console.log(
+    `\nUpdated ${updatedCount} skill${updatedCount === 1 ? '' : 's'}, ${result.upToDate.length} already up to date, ${result.skipped.length} skipped`
+  );
+}
+
 const SKILLS_SEARCH_API = 'https://skills.sh/api/search';
 const SEARCH_TIMEOUT_MS = 5000;
 const SEARCH_DEFAULT_LIMIT = 10;
@@ -5295,6 +5886,14 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     await cmdRemove(flags, args, context);
     return;
   }
+  if (command === 'check') {
+    await cmdCheck(flags, context);
+    return;
+  }
+  if (command === 'update') {
+    await cmdUpdate(flags, args, context);
+    return;
+  }
 
   throw new Error(`Unknown command: ${command}`);
 }
@@ -5305,15 +5904,19 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
+  checkSkillUpdates,
+  cmdCheck,
   cmdFind,
   cmdFindInteractive,
   cmdRemove,
-  searchSkills,
+  cmdUpdate,
+  computeLocalTreeFingerprint,
   computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
   discoverNodeModuleSkills,
   getOwnerRepo,
+  installSkillToTarget,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
@@ -5321,11 +5924,13 @@ export {
   planSyncWriteMode,
   readProjectLockfile,
   removeLockfileEntry,
+  resolveGitHubToken,
   resolveSelectorMatches,
   resolveSyncTarget,
   resolveTemplatePath,
   pickPreferredCanonicalPath,
   sanitizeSubpath,
+  searchSkills,
   updateLockfileEntry,
   writeExternalSkillLock,
   writeProjectLockfile

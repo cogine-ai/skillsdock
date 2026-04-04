@@ -4,6 +4,27 @@
 
 ### Added
 
+- `skillsdock check [--json]` — detect available updates for installed skills via the GitHub Trees API:
+  - Reads both `skills-lock.json` and the SkillsDock registry for tracked skills
+  - Uses GitHub Trees API (`GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1`) with one API call per repository (batches skills from the same repo)
+  - Computes a SHA-256 fingerprint from remote tree blob SHAs and compares against a locally stored `treeSha` field (same hash domain as GitHub API, avoiding false positives from content-vs-git-object hash mismatches)
+  - Text output shows up-to-date count, skills with updates, and skipped skills
+  - `--json` outputs machine-readable JSON (no ANSI escape codes)
+  - Skips non-GitHub sources (local, GitLab) with a reason in the report
+  - Graceful degradation on network errors and API rate limits
+- `skillsdock update [--scope user|project] [--dry-run]` — automatically re-install skills that have available updates:
+  - Runs the same freshness detection as `check`
+  - Re-clones and re-installs outdated skills using `installSkillToTarget()`
+  - Updates `skills-lock.json` with new content hashes and `treeSha` after installation
+  - `--dry-run` previews which skills would be updated without writing files
+  - `--scope user|project` controls the installation target (default: `project`)
+  - Prints an update summary: updated count, already up to date, skipped
+- `resolveGitHubToken()` — resolves a GitHub token with priority: `GITHUB_TOKEN` env var > `GH_TOKEN` env var > `gh auth token` CLI fallback; unauthenticated requests still work (60 req/hr)
+- Exported `installSkillToTarget()` for reuse in `cmdUpdate`
+- `computeLocalTreeFingerprint(repoDir, subpath)` — computes a tree fingerprint from a local git clone using `git ls-tree -r HEAD`, producing hashes in the same domain as the GitHub Trees API (git blob SHA-1s)
+- `treeSha` field added to `skills-lock.json` entries for GitHub-sourced skills — stores the tree fingerprint at install time for reliable freshness detection
+- Pre-existing lockfile entries without `treeSha` are treated as needing update (one-time migration)
+- Test suite `test/check-update.test.mjs` covering token resolution, update detection, treeSha-based comparison, legacy entries without treeSha, batching, network errors, rate limits, JSON output, dry-run, CLI integration, and mixed scenarios (27 tests)
 - `skillsdock find [query] [--json]` — search for skills in the skills.sh ecosystem:
   - Non-interactive mode: `skillsdock find <query>` searches and prints a formatted results table
   - Interactive mode: `skillsdock find` in a TTY launches a readline-based live search with debounce

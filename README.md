@@ -47,11 +47,15 @@ Schema:
       "sourceType": "github",
       "sourceUrl": "https://github.com/owner/repo",
       "computedHash": "sha256-hex-string",
+      "treeSha": "sha256-hex-string",
       "skillPath": "relative/path/to/skill"
     }
   }
 }
 ```
+
+- `computedHash`: SHA-256 of local file contents (for integrity checking)
+- `treeSha`: SHA-256 fingerprint derived from git blob SHAs (for remote freshness detection via `skillsdock check`)
 
 The lockfile lives at `${projectRoot}/skills-lock.json` (auto-detected via `detectProjectRoot()`).
 
@@ -118,6 +122,18 @@ skillsdock add ./path/to/skills --scope project
 # preview what would be installed
 skillsdock add owner/repo --dry-run
 
+# check for skill updates
+skillsdock check
+
+# check for updates (JSON output)
+skillsdock check --json
+
+# update outdated skills
+skillsdock update --scope project
+
+# preview updates without installing
+skillsdock update --dry-run
+
 # inspect built-in agent compatibility + detection
 skillsdock doctor --agents
 ```
@@ -142,6 +158,8 @@ skillsdock remove --all --scope <user|project> [--dry-run] [--force]
 skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
 skillsdock find [query] [--json]
 skillsdock sync --from node_modules [--scope user|project] [--dry-run]
+skillsdock check [--json]
+skillsdock update [--scope user|project] [--dry-run]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
 ```
@@ -221,6 +239,93 @@ skillsdock add ./my-skills --scope project
 skillsdock add acme/awesome-skills --dry-run
 ```
 
+## Check Command
+
+`skillsdock check` detects available updates for installed skills by comparing local content hashes against remote GitHub tree data.
+
+### How It Works
+
+1. Reads tracked skills from `skills-lock.json` and the SkillsDock registry
+2. For each GitHub-sourced skill, fetches the repository tree via the GitHub Trees API
+3. Skills from the same repository are batched into a single API call (avoids N+1)
+4. Computes a SHA-256 fingerprint from the remote tree and compares it to the locally stored hash
+5. Reports which skills are up to date, which have updates, and which were skipped
+
+### Options
+
+- `--json` — Output machine-readable JSON instead of human-readable text
+
+### GitHub Authentication
+
+Token resolution (in priority order):
+
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` CLI command
+
+Without a token, unauthenticated requests are used (60 requests/hour). When rate-limited, a helpful message is shown.
+
+### Examples
+
+```bash
+# check all tracked skills
+skillsdock check
+
+# machine-readable output
+skillsdock check --json
+
+# with authentication for higher rate limits
+GITHUB_TOKEN=ghp_xxx skillsdock check
+```
+
+### Text Output
+
+```text
+✓ 3 skills up to date
+⚡ 2 skills have updates available:
+  - typescript-skill (vercel-labs/agent-skills)
+  - react-skill (vercel-labs/agent-skills)
+⏭ 1 skill skipped (no source URL)
+```
+
+### JSON Output
+
+```json
+{
+  "upToDate": [{ "name": "my-skill", "source": "owner/repo" }],
+  "updatesAvailable": [{ "name": "stale-skill", "source": "owner/repo", "currentHash": "...", "remoteHash": "..." }],
+  "skipped": [{ "name": "local-skill", "reason": "no source URL" }]
+}
+```
+
+## Update Command
+
+`skillsdock update` automatically re-installs skills that have available updates.
+
+### How It Works
+
+1. Runs the same freshness detection as `check`
+2. For each outdated skill, re-clones the source repository and re-installs the skill
+3. Updates `skills-lock.json` with the new content hash
+
+### Options
+
+- `--scope user|project` — Installation target (default: `project`)
+- `--dry-run` — Preview which skills would be updated without writing files
+
+### Examples
+
+```bash
+# update all outdated project-scope skills
+skillsdock update --scope project
+
+# preview what would be updated
+skillsdock update --dry-run
+
+# update user-scope skills
+skillsdock update --scope user
+```
+
 ## Find Command
 
 Search for skills in the [skills.sh](https://skills.sh) ecosystem.
@@ -253,6 +358,7 @@ The interactive mode uses debounced input (200ms) to show live results as you ty
 - Network unreachable: prints a connection error and exits with non-zero status
 - API errors (non-200): prints the HTTP status and exits with non-zero status
 - Timeout (5s): prints a timeout message and exits with non-zero status
+
 
 ## Sync Modes
 
