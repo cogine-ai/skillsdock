@@ -140,6 +140,7 @@ skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--
 skillsdock remove <selector> [--scope <user|project>] [--dry-run] [--force] [--all-copies]
 skillsdock remove --all --scope <user|project> [--dry-run] [--force]
 skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
+skillsdock find [query] [--json]
 skillsdock sync --from node_modules [--scope user|project] [--dry-run]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
@@ -219,6 +220,39 @@ skillsdock add ./my-skills --scope project
 # preview without writing
 skillsdock add acme/awesome-skills --dry-run
 ```
+
+## Find Command
+
+Search for skills in the [skills.sh](https://skills.sh) ecosystem.
+
+### Non-interactive mode
+
+```bash
+# search by keyword
+skillsdock find typescript
+
+# machine-readable JSON output
+skillsdock find react --json
+```
+
+Results are displayed as a formatted table with name, source, and description. Install a discovered skill with `skillsdock add <source>`.
+
+### Interactive mode
+
+When run without a query in a TTY terminal, `find` launches an interactive search:
+
+```bash
+skillsdock find
+# Search skills: _  (type to search, Enter to confirm, Ctrl+C to exit)
+```
+
+The interactive mode uses debounced input (200ms) to show live results as you type.
+
+### Error handling
+
+- Network unreachable: prints a connection error and exits with non-zero status
+- API errors (non-200): prints the HTTP status and exits with non-zero status
+- Timeout (5s): prints a timeout message and exits with non-zero status
 
 ## Sync Modes
 
