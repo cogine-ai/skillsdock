@@ -1898,6 +1898,7 @@ Usage:
   skillsdock remove <selector> [--scope <user|project>] [--dry-run] [--force] [--all-copies]
   skillsdock remove --all --scope <user|project> [--dry-run] [--force]
   skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
+  skillsdock find [query] [--json]
   skillsdock sync --from node_modules [--scope user|project] [--dry-run]
   skillsdock check [--json]
   skillsdock update [--scope user|project] [--dry-run]
@@ -1916,6 +1917,8 @@ Examples:
   skillsdock add owner/repo --scope user
   skillsdock add owner/repo@skill-name --dry-run
   skillsdock add ./path/to/skills --scope project
+  skillsdock find typescript
+  skillsdock find react --json
   skillsdock sync --from node_modules --dry-run
   skillsdock check
   skillsdock check --json
@@ -5531,6 +5534,197 @@ async function cmdUpdate(flags, args, context) {
   );
 }
 
+const SKILLS_SEARCH_API = 'https://skills.sh/api/search';
+const SEARCH_TIMEOUT_MS = 5000;
+const SEARCH_DEFAULT_LIMIT = 10;
+const SEARCH_DEBOUNCE_MS = 200;
+
+async function searchSkills(query, options = {}) {
+  const fetchFn = options.fetch || globalThis.fetch;
+  const limit = options.limit || SEARCH_DEFAULT_LIMIT;
+  const url = `${SKILLS_SEARCH_API}?q=${encodeURIComponent(query)}&limit=${limit}`;
+
+  let response;
+  try {
+    response = await fetchFn(url, {
+      signal: AbortSignal.timeout(options.timeout || SEARCH_TIMEOUT_MS)
+    });
+  } catch (err) {
+    if (err && err.name === 'TimeoutError') {
+      throw makeCliError('Search timed out. Please try again.');
+    }
+    throw makeCliError('Unable to reach skills.sh. Check your internet connection.');
+  }
+
+  if (!response.ok) {
+    throw makeCliError(`Search failed: HTTP ${response.status}. Please try again later.`);
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw makeCliError('Search failed: invalid response from skills.sh.');
+  }
+
+  let results;
+  if (Array.isArray(data)) {
+    results = data;
+  } else if (data && Array.isArray(data.results)) {
+    results = data.results;
+  } else if (data && Array.isArray(data.skills)) {
+    results = data.skills;
+  } else {
+    results = [];
+  }
+
+  return results
+    .filter((item) => typeof item === 'object' && item !== null)
+    .map((item) => ({
+      name: typeof item.name === 'string' ? item.name : '-',
+      source: typeof item.source === 'string' ? item.source : '-',
+      description: typeof item.description === 'string' ? item.description : '-'
+    }));
+}
+
+function formatFindResults(skills, query) {
+  const lines = [];
+  lines.push(`Found ${skills.length} skill${skills.length !== 1 ? 's' : ''} matching "${query}":\n`);
+
+  const columns = [
+    { label: 'NAME', get: (r) => r.name, min: 8, max: 24 },
+    { label: 'SOURCE', get: (r) => r.source, min: 8, max: 40 },
+    { label: 'DESCRIPTION', get: (r) => r.description, min: 8, max: 60 }
+  ];
+  const widths = columns.map((col) => {
+    const maxCell = Math.max(col.label.length, ...skills.map((row) => String(col.get(row) ?? '').length));
+    return Math.min(Math.max(maxCell, col.min || 8), col.max || 80);
+  });
+
+  lines.push(columns.map((col, i) => padCell(col.label, widths[i])).join('  '));
+  for (const row of skills) {
+    lines.push(columns.map((col, i) => padCell(col.get(row), widths[i])).join('  '));
+  }
+  lines.push('');
+  lines.push('Install with: skillsdock add <source>');
+  return lines.join('\n');
+}
+
+async function cmdFindInteractive(options = {}) {
+  const fetchFn = options.fetch || globalThis.fetch;
+  const { createInterface } = await import('node:readline');
+
+  const rl = createInterface({
+    input: options.stdin || process.stdin,
+    output: options.stdout || process.stdout
+  });
+
+  let debounceTimer = null;
+  let settled = false;
+
+  const doSearch = async (query) => {
+    if (!query || !query.trim()) return;
+    try {
+      const results = await searchSkills(query.trim(), { fetch: fetchFn });
+      if (results.length === 0) {
+        (options.stdout || process.stdout).write(`\nNo skills found matching "${query.trim()}".\n`);
+      } else {
+        (options.stdout || process.stdout).write('\n' + formatFindResults(results, query.trim()) + '\n');
+      }
+    } catch {
+      // Swallow errors during live search; final Enter search will report them
+    }
+  };
+
+  const stdinSource = options.stdin || process.stdin;
+  const onData = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    const currentLine = rl.line || '';
+    if (currentLine.trim()) {
+      debounceTimer = setTimeout(() => doSearch(currentLine), SEARCH_DEBOUNCE_MS);
+    }
+  };
+
+  const cleanup = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = null;
+    stdinSource.removeListener('data', onData);
+  };
+
+  return new Promise((resolve, reject) => {
+    const settle = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err); else resolve();
+    };
+
+    rl.question('Search skills: ', async (answer) => {
+      const query = (answer || '').trim();
+      if (!query) {
+        rl.close();
+        settle();
+        return;
+      }
+
+      try {
+        const results = await searchSkills(query, { fetch: fetchFn });
+        if (results.length === 0) {
+          console.log(`No skills found matching "${query}". Try a different search term.`);
+        } else {
+          console.log(formatFindResults(results, query));
+        }
+        settle();
+      } catch (err) {
+        settle(err);
+      }
+      rl.close();
+    });
+
+    rl.on('close', () => {
+      settle();
+    });
+
+    stdinSource.on('data', onData);
+  });
+}
+
+async function cmdFind(flags, args, context) {
+  const query = args[0];
+  const isJson = Boolean(flags.json);
+  const fetchFn = (context && context.fetch) || globalThis.fetch;
+  const isTTY = process.stdout.isTTY && process.stdin.isTTY;
+
+  if (!query) {
+    if (isTTY) {
+      await cmdFindInteractive({ fetch: fetchFn });
+      return;
+    }
+    const usageText = [
+      'Usage: skillsdock find <query> [--json]',
+      '',
+      'Search for skills in the skills.sh ecosystem.',
+      'Run in a terminal for interactive search.'
+    ].join('\n');
+    console.log(usageText);
+    return;
+  }
+
+  const results = await searchSkills(query, { fetch: fetchFn });
+
+  if (isJson) {
+    console.log(JSON.stringify(results));
+    return;
+  }
+
+  if (results.length === 0) {
+    console.log(`No skills found matching "${query}". Try a different search term.`);
+    return;
+  }
+
+  console.log(formatFindResults(results, query));
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -5590,6 +5784,10 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     await cmdAdd(flags, args, context);
     return;
   }
+  if (command === 'find') {
+    await cmdFind(flags, args, context);
+    return;
+  }
   if (command === 'doctor') {
     await cmdDoctor(flags, context);
     return;
@@ -5618,6 +5816,8 @@ export {
   buildCleanupPlan,
   checkSkillUpdates,
   cmdCheck,
+  cmdFind,
+  cmdFindInteractive,
   cmdRemove,
   cmdUpdate,
   computeLocalTreeFingerprint,
@@ -5640,6 +5840,7 @@ export {
   resolveTemplatePath,
   pickPreferredCanonicalPath,
   sanitizeSubpath,
+  searchSkills,
   updateLockfileEntry,
   writeExternalSkillLock,
   writeProjectLockfile
