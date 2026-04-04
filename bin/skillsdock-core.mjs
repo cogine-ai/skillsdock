@@ -4148,6 +4148,8 @@ async function cmdAdd(flags, args, context) {
       );
     }
 
+    const repoRootDir = tmpDir ? path.join(tmpDir, 'repo') : null;
+
     for (const skillEntry of filtered) {
       try {
         parseContentForFormat('skill-md', await fs.readFile(skillEntry.skillPath, 'utf8'), skillEntry.skillPath);
@@ -4156,6 +4158,10 @@ async function cmdAdd(flags, args, context) {
         continue;
       }
 
+      const repoRelativeDir = repoRootDir
+        ? path.relative(repoRootDir, skillEntry.skillDir)
+        : '';
+
       if (dryRun) {
         const destDir = path.join(targetBaseDir, skillEntry.skillName);
         console.log(`[dry-run] Would install ${skillEntry.skillName} -> ${destDir}`);
@@ -4163,7 +4169,8 @@ async function cmdAdd(flags, args, context) {
           skillName: skillEntry.skillName,
           destDir,
           action: 'copy',
-          links: []
+          links: [],
+          repoRelativeDir
         });
         continue;
       }
@@ -4183,7 +4190,8 @@ async function cmdAdd(flags, args, context) {
         skillName: skillEntry.skillName,
         destDir: result.destDir,
         action: result.action,
-        links
+        links,
+        repoRelativeDir
       });
     }
 
@@ -4253,16 +4261,7 @@ async function cmdAdd(flags, args, context) {
 
     if (!dryRun && scope === 'project') {
       const resolvedUrl = sourceUrl(source);
-
-      let treeSha = null;
-      if (tmpDir && source.type === 'github') {
-        try {
-          const repoDir = path.join(tmpDir, 'repo');
-          treeSha = computeLocalTreeFingerprint(repoDir, source.subpath || '');
-        } catch {
-          // Non-fatal
-        }
-      }
+      const repoDir = tmpDir ? path.join(tmpDir, 'repo') : null;
 
       for (const item of installed) {
         let folderHash = null;
@@ -4272,14 +4271,25 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
+        let perSkillTreeSha = null;
+        if (repoDir && source.type === 'github') {
+          try {
+            const skillRepoPath = item.repoRelativeDir || '';
+            perSkillTreeSha = computeLocalTreeFingerprint(repoDir, skillRepoPath);
+          } catch {
+            // Non-fatal
+          }
+        }
+
         const lockEntry = {
           source: sourceArg,
           sourceType: source.type,
           sourceUrl: resolvedUrl,
           computedHash: folderHash,
-          skillPath: path.relative(projectRoot, item.destDir)
+          skillPath: path.relative(projectRoot, item.destDir),
+          repoSubpath: item.repoRelativeDir || null
         };
-        if (treeSha) lockEntry.treeSha = treeSha;
+        if (perSkillTreeSha) lockEntry.treeSha = perSkillTreeSha;
         await updateLockfileEntry(projectRoot, item.skillName, lockEntry);
       }
     }
@@ -5261,7 +5271,7 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
     }
 
     for (const skill of group.skills) {
-      const subpath = skill.parsed.subpath || '';
+      const subpath = skill.entry.repoSubpath || skill.parsed.subpath || '';
       const remoteFingerprint = buildTreeFingerprint(treeData, subpath);
       const localTreeSha = skill.entry.treeSha;
 
@@ -5455,7 +5465,8 @@ async function cmdUpdate(flags, args, context) {
       let newTreeSha = null;
       try {
         const repoDir = path.join(tmpDir, 'repo');
-        newTreeSha = computeLocalTreeFingerprint(repoDir, source.subpath || '');
+        const skillRepoSubpath = path.relative(repoDir, match.skillDir);
+        newTreeSha = computeLocalTreeFingerprint(repoDir, skillRepoSubpath);
       } catch {
         // Non-fatal
       }
@@ -5474,12 +5485,14 @@ async function cmdUpdate(flags, args, context) {
       }
 
       if (scope === 'project') {
+        const repoDir = path.join(tmpDir, 'repo');
         const lockEntry = {
           source: entry.source,
           sourceType: entry.sourceType,
           sourceUrl: entry.sourceUrl,
           computedHash: folderHash,
-          skillPath: path.relative(projectRoot, destDir)
+          skillPath: path.relative(projectRoot, destDir),
+          repoSubpath: path.relative(repoDir, match.skillDir) || null
         };
         if (newTreeSha) lockEntry.treeSha = newTreeSha;
         await updateLockfileEntry(projectRoot, u.name, lockEntry);

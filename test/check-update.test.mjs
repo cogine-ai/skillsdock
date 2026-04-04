@@ -787,3 +787,61 @@ test('checkSkillUpdates flags entries without treeSha as needing update', async 
   assert.equal(result.updatesAvailable[0].name, 'legacy-skill');
   assert.equal(result.updatesAvailable[0].currentHash, null);
 });
+
+test('checkSkillUpdates uses per-skill repoSubpath for fingerprinting', async () => {
+  const MULTI_SKILL_TREE = {
+    sha: 'root-sha',
+    tree: [
+      { path: 'skills/skill-a/SKILL.md', type: 'blob', sha: 'a-skill-sha' },
+      { path: 'skills/skill-a/index.js', type: 'blob', sha: 'a-index-sha' },
+      { path: 'skills/skill-b/SKILL.md', type: 'blob', sha: 'b-skill-sha' },
+      { path: 'skills/skill-b/index.js', type: 'blob', sha: 'b-index-sha' }
+    ]
+  };
+
+  const CHANGED_TREE = {
+    sha: 'changed-root',
+    tree: [
+      { path: 'skills/skill-a/SKILL.md', type: 'blob', sha: 'a-skill-sha-CHANGED' },
+      { path: 'skills/skill-a/index.js', type: 'blob', sha: 'a-index-sha' },
+      { path: 'skills/skill-b/SKILL.md', type: 'blob', sha: 'b-skill-sha' },
+      { path: 'skills/skill-b/index.js', type: 'blob', sha: 'b-index-sha' }
+    ]
+  };
+
+  const treeShaA = computeTreeFingerprint(MULTI_SKILL_TREE, 'skills/skill-a');
+  const treeShaB = computeTreeFingerprint(MULTI_SKILL_TREE, 'skills/skill-b');
+
+  assert.notEqual(treeShaA, treeShaB, 'Per-skill fingerprints should differ');
+
+  const lockSkills = {
+    'skill-a': {
+      source: 'owner/repo',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      computedHash: 'local-a',
+      treeSha: treeShaA,
+      repoSubpath: 'skills/skill-a',
+      skillPath: '.agents/skills/skill-a'
+    },
+    'skill-b': {
+      source: 'owner/repo',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      computedHash: 'local-b',
+      treeSha: treeShaB,
+      repoSubpath: 'skills/skill-b',
+      skillPath: '.agents/skills/skill-b'
+    }
+  };
+
+  const result = await checkSkillUpdates(lockSkills, {}, {
+    fetchFn: makeFetchFn(CHANGED_TREE),
+    token: null
+  });
+
+  assert.equal(result.updatesAvailable.length, 1, 'Only skill-a should need update');
+  assert.equal(result.updatesAvailable[0].name, 'skill-a');
+  assert.equal(result.upToDate.length, 1, 'skill-b should be up to date');
+  assert.equal(result.upToDate[0].name, 'skill-b');
+});
