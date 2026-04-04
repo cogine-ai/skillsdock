@@ -4,6 +4,13 @@
 
 ### Added
 
+- `skillsdock find [query] [--json]` — search for skills in the skills.sh ecosystem:
+  - Non-interactive mode: `skillsdock find <query>` searches and prints a formatted results table
+  - Interactive mode: `skillsdock find` in a TTY launches a readline-based live search with debounce
+  - `--json` flag outputs machine-readable JSON array
+  - Defensive API response parsing (supports array, `{ results }`, and `{ skills }` formats)
+  - Graceful degradation for network errors, timeouts, and non-200 HTTP status codes
+  - Non-TTY without query shows usage hint
 - `skillsdock remove <selector>` — new command to clean up installed skill files, symlinks, and registry/lockfile entries:
   - Resolves skills by id, key, or path via `resolveSelectorMatches()`
   - Deletes canonical skill directories under `.agents/skills/`
