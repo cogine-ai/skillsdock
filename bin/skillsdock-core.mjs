@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
 const APP_NAME = 'skillsdock';
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.4.0';
 
 const HOME = os.homedir();
 const APP_DIR = path.join(HOME, '.skillsdock');
