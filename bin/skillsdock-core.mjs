@@ -629,70 +629,6 @@ async function readExternalSkillLock(homeDir = HOME) {
   return state;
 }
 
-function parseSource(raw) {
-  if (!raw || typeof raw !== 'string') {
-    throw new Error('Source argument is required.');
-  }
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new Error('Source argument is required.');
-  }
-
-  if (trimmed.startsWith('./') || trimmed.startsWith('/') || trimmed.startsWith('../')) {
-    return { type: 'local', path: path.resolve(trimmed) };
-  }
-
-  const githubUrlMatch = trimmed.match(
-    /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/tree\/([^/]+)(?:\/(.+))?)?$/
-  );
-  if (githubUrlMatch) {
-    const [, owner, repo, branch, subpath] = githubUrlMatch;
-    return {
-      type: 'github',
-      owner,
-      repo,
-      branch: branch || null,
-      subpath: subpath || null,
-      skillFilter: null,
-      url: trimmed
-    };
-  }
-
-  const gitlabUrlMatch = trimmed.match(
-    /^https?:\/\/gitlab\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/-\/tree\/([^/]+)(?:\/(.+))?)?$/
-  );
-  if (gitlabUrlMatch) {
-    const [, owner, repo, branch, subpath] = gitlabUrlMatch;
-    return {
-      type: 'gitlab',
-      owner,
-      repo,
-      branch: branch || null,
-      subpath: subpath || null,
-      skillFilter: null,
-      url: trimmed
-    };
-  }
-
-  const shorthandMatch = trimmed.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:@(.+))?$/);
-  if (shorthandMatch) {
-    const [, owner, repo, skillFilter] = shorthandMatch;
-    return {
-      type: 'github',
-      owner,
-      repo,
-      branch: null,
-      subpath: null,
-      skillFilter: skillFilter || null,
-      url: `https://github.com/${owner}/${repo}`
-    };
-  }
-
-  throw new Error(
-    `Cannot parse source "${trimmed}". Expected owner/repo, owner/repo@skill, a GitHub/GitLab URL, or a local path (./path).`
-  );
-}
-
 async function writeExternalSkillLock(lockPath, entries) {
   const skills = {};
   for (const entry of entries) {
@@ -713,11 +649,6 @@ async function writeExternalSkillLock(lockPath, entries) {
   };
   await ensureParentDir(lockPath);
   await writeJson(lockPath, data);
-}
-
-async function computeSkillFolderHash(skillDir) {
-  const manifest = await buildDirectoryManifest(skillDir, path.join(skillDir, 'SKILL.md'));
-  return manifest.manifestHash;
 }
 
 function resolveExternalSkillMetadataForFile(filePath, skillId, lockState, homeDir = HOME) {
@@ -4122,6 +4053,16 @@ async function removePathIfExists(filePath) {
   }
 }
 
+function sourceUrl(source) {
+  if (source.raw && (source.raw.startsWith('https://') || source.raw.startsWith('http://'))) {
+    return source.raw;
+  }
+  if (source.owner && source.repo) {
+    return `https://github.com/${source.owner}/${source.repo}`;
+  }
+  return null;
+}
+
 async function cmdAdd(flags, args, context) {
   const sourceArg = args[0];
   if (!sourceArg || typeof sourceArg !== 'string') {
@@ -4152,13 +4093,18 @@ async function cmdAdd(flags, args, context) {
     let searchRoot;
 
     if (source.type === 'local') {
-      if (!(await pathExists(source.path))) {
-        throw makeCliError(`Local path does not exist: ${source.path}`);
+      const localPath = path.resolve(source.raw);
+      if (!(await pathExists(localPath))) {
+        throw makeCliError(`Local path does not exist: ${localPath}`);
       }
-      searchRoot = source.path;
+      searchRoot = localPath;
     } else {
       tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'skillsdock-add-'));
-      searchRoot = await cloneGitRepo(source, tmpDir);
+      const cloneSource = {
+        ...source,
+        url: sourceUrl(source) || source.raw
+      };
+      searchRoot = await cloneGitRepo(cloneSource, tmpDir);
     }
 
     const skills = await discoverSkillMdFiles(searchRoot);
@@ -4230,10 +4176,12 @@ async function cmdAdd(flags, args, context) {
       const lockEntries = [];
 
       if (existingLock.healthy) {
-        for (const [name, entry] of existingLock.entriesByName) {
+        for (const [, entry] of existingLock.entriesByName) {
           lockEntries.push(entry);
         }
       }
+
+      const resolvedUrl = sourceUrl(source);
 
       for (const item of installed) {
         const existing = lockEntries.find((e) => e.skillName === item.skillName);
@@ -4249,7 +4197,7 @@ async function cmdAdd(flags, args, context) {
           skillName: item.skillName,
           source: sourceArg,
           sourceType: source.type,
-          sourceUrl: source.url || null,
+          sourceUrl: resolvedUrl,
           skillPath: `${item.skillName}/SKILL.md`,
           skillFolderHash: folderHash,
           installedAt: existing?.installedAt || now,
@@ -4269,24 +4217,9 @@ async function cmdAdd(flags, args, context) {
     }
 
     if (!dryRun && scope === 'project') {
-      const lockDir = path.join(projectRoot, '.agents');
-      const lockPath = path.join(lockDir, EXTERNAL_SKILL_LOCK_FILE);
-
-      let existingEntries = [];
-      try {
-        const raw = await fs.readFile(lockPath, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed?.skills && typeof parsed.skills === 'object') {
-          for (const [name, entry] of Object.entries(parsed.skills)) {
-            existingEntries.push(mapExternalSkillLockEntry(name, entry));
-          }
-        }
-      } catch {
-        // No existing lockfile
-      }
+      const resolvedUrl = sourceUrl(source);
 
       for (const item of installed) {
-        const now = new Date().toISOString();
         let folderHash = null;
         try {
           folderHash = await computeSkillFolderHash(item.destDir);
@@ -4294,33 +4227,21 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
-        const entry = {
-          skillName: item.skillName,
+        await updateLockfileEntry(projectRoot, item.skillName, {
           source: sourceArg,
           sourceType: source.type,
-          sourceUrl: source.url || null,
-          skillPath: `${item.skillName}/SKILL.md`,
-          skillFolderHash: folderHash,
-          installedAt:
-            existingEntries.find((e) => e?.skillName === item.skillName)?.installedAt || now,
-          updatedAt: now,
-          pluginName: null
-        };
-
-        const idx = existingEntries.findIndex((e) => e?.skillName === item.skillName);
-        if (idx >= 0) {
-          existingEntries[idx] = entry;
-        } else {
-          existingEntries.push(entry);
-        }
+          sourceUrl: resolvedUrl,
+          computedHash: folderHash,
+          skillPath: path.relative(projectRoot, item.destDir)
+        });
       }
-
-      await writeExternalSkillLock(lockPath, existingEntries);
     }
 
     if (!dryRun) {
       const { registryPath, registry } = await loadRegistry(flags.registry);
       const now = new Date().toISOString();
+      const resolvedUrl = sourceUrl(source);
+
       for (const item of installed) {
         const skillMdPath = path.join(item.destDir, 'SKILL.md');
         const raw = await fs.readFile(skillMdPath, 'utf8');
@@ -4350,7 +4271,7 @@ async function cmdAdd(flags, args, context) {
             lastSeenAt: now,
             externalSource: sourceArg,
             externalSourceType: source.type,
-            externalSourceUrl: source.url || null
+            externalSourceUrl: resolvedUrl
           },
           ''
         );
@@ -4457,13 +4378,11 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
-  computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
-  parseSource,
   planSyncWriteMode,
   resolveSelectorMatches,
   resolveSyncTarget,
