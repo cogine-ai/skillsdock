@@ -28,6 +28,33 @@ This repository is intentionally **CLI-only**.
   - registry items may now retain additive external metadata such as `externalSourceUrl`, `externalHash`, and `externalPluginName`
   - `doctor` reports lockfile presence, version, and unmatched entries without writing back to the external lockfile
 
+## Project Lockfile (`skills-lock.json`)
+
+SkillsDock supports a project-level `skills-lock.json` that deterministically tracks installed skills, their sources, and content hashes. This file is designed for team collaboration:
+
+- **Git-friendly**: keys are sorted alphabetically, no timestamps, deterministic output
+- **Hash-based integrity**: each skill entry stores a SHA-256 hash computed from all files in the skill folder (path-aware, skips `.git` and `node_modules`)
+- **Merge-conflict safe**: if the lockfile contains git conflict markers (`<<<<<<<`), SkillsDock treats it as empty and prints a warning instead of crashing
+
+Schema:
+
+```json
+{
+  "version": 1,
+  "skills": {
+    "skill-name": {
+      "source": "owner/repo",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/owner/repo",
+      "computedHash": "sha256-hex-string",
+      "skillPath": "relative/path/to/skill"
+    }
+  }
+}
+```
+
+The lockfile lives at `${projectRoot}/skills-lock.json` (auto-detected via `detectProjectRoot()`).
+
 ## Design Principle
 
 SkillsDock uses a curated local agent path registry as a **pattern seed**.
@@ -111,6 +138,7 @@ skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--chang
 skillsdock inspect <id|key|path> [--registry <path>] [--json]
 skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--registry <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
 skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
+skillsdock sync --from node_modules [--scope user|project] [--dry-run]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
 ```
@@ -206,6 +234,37 @@ Behavior:
 - If source and destination already resolve to the same real path, sync is a no-op for that item.
 - Existing broken or circular destination symlinks are replaced safely during sync.
 - Atomic copy writes are used (`tmp` + `rename`).
+
+## Syncing Skills From `node_modules`
+
+SkillsDock can discover and install skills published as npm packages:
+
+```bash
+# discover and sync all skills from node_modules (project scope)
+skillsdock sync --from node_modules
+
+# preview what would be synced without writing files
+skillsdock sync --from node_modules --dry-run
+
+# sync to user scope instead of project
+skillsdock sync --from node_modules --scope user
+```
+
+### How It Works
+
+1. **Discovery**: scans `node_modules` for packages containing `SKILL.md` files. Each package is checked at three locations: package root, `skills/`, and `.agents/skills/`. Scoped packages (`@org/pkg`) are fully supported.
+2. **Incremental diff**: computes a SHA-256 hash of each discovered skill directory and compares it against `skills-lock.json`. Skills with unchanged hashes are skipped.
+3. **Install/Update**: new or changed skills are copied into `.agents/skills/<skill-name>/` and the lockfile is updated with `sourceType: "node_modules"`.
+4. **Lockfile tracking**: each synced skill is recorded in `skills-lock.json` with the npm package name as `source`.
+
+### Output
+
+The command prints a summary showing:
+
+- Total skills discovered
+- Skills skipped (unchanged)
+- Skills installed (new)
+- Skills updated (hash changed)
 
 ## Supported Formats
 
@@ -341,7 +400,52 @@ See [COMPATIBILITY.md](./COMPATIBILITY.md).
 
 ## Built-In Agent Registry
 
-The built-in registry now covers 42 agents, including `amp`, `antigravity`, `augment`, `gemini-cli`, `github-copilot`, `goose`, `roo`, `windsurf`, `zencoder`, `pochi`, and `adal`.
+<!-- AGENT-TABLE-START -->
+| Agent Name | ID | User Scope Path | Project Scope Path | Install Family |
+|---|---|---|---|---|
+| OpenClaw | `openclaw` | `~/.openclaw/skills` | `${projectRoot}/skills` | dedicated |
+| Codex | `codex` | `~/.codex/skills` | `${projectRoot}/.codex/skills` | universal |
+| Claude | `claude` | `~/.claude/skills` | `${projectRoot}/.claude/skills` | dedicated |
+| Cursor | `cursor` | `~/.cursor/rules` | `${projectRoot}/.cursor/rules` | universal |
+| Cline | `cline` | `~/.cline/rules` | `${projectRoot}/.cline/rules` | universal |
+| CodeBuddy | `codebuddy` | `~/.codebuddy/skills` | `${projectRoot}/.codebuddy/skills` | dedicated |
+| Trae | `trae` | `~/.trae/skills` | `${projectRoot}/.trae/skills` | dedicated |
+| OpenCode | `opencode` | `~/.opencode/skills` | `${projectRoot}/.opencode/skills` | universal |
+| Amp | `amp` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Antigravity | `antigravity` | `~/.gemini/antigravity/skills` | `${projectRoot}/.agents/skills` | universal |
+| Augment | `augment` | `~/.augment/skills` | `${projectRoot}/.augment/skills` | dedicated |
+| Command Code | `command-code` | `~/.commandcode/skills` | `${projectRoot}/.commandcode/skills` | dedicated |
+| Continue | `continue` | `~/.continue/skills` | `${projectRoot}/.continue/skills` | dedicated |
+| Cortex Code | `cortex` | `~/.snowflake/cortex/skills` | `${projectRoot}/.cortex/skills` | dedicated |
+| Crush | `crush` | `~/.config/crush/skills` | `${projectRoot}/.crush/skills` | dedicated |
+| Deep Agents | `deepagents` | `~/.deepagents/agent/skills` | `${projectRoot}/.agents/skills` | universal |
+| Droid | `droid` | `~/.factory/skills` | `${projectRoot}/.factory/skills` | dedicated |
+| Gemini CLI | `gemini-cli` | `~/.gemini/skills` | `${projectRoot}/.agents/skills` | universal |
+| GitHub Copilot | `github-copilot` | `~/.copilot/skills` | `${projectRoot}/.agents/skills` | universal |
+| Goose | `goose` | `~/.config/goose/skills` | `${projectRoot}/.goose/skills` | dedicated |
+| Junie | `junie` | `~/.junie/skills` | `${projectRoot}/.junie/skills` | dedicated |
+| iFlow CLI | `iflow-cli` | `~/.iflow/skills` | `${projectRoot}/.iflow/skills` | dedicated |
+| Kilo Code | `kilo` | `~/.kilocode/skills` | `${projectRoot}/.kilocode/skills` | dedicated |
+| Kimi Code CLI | `kimi-cli` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Kiro CLI | `kiro-cli` | `~/.kiro/skills` | `${projectRoot}/.kiro/skills` | dedicated |
+| Kode | `kode` | `~/.kode/skills` | `${projectRoot}/.kode/skills` | dedicated |
+| MCPJam | `mcpjam` | `~/.mcpjam/skills` | `${projectRoot}/.mcpjam/skills` | dedicated |
+| Mistral Vibe | `mistral-vibe` | `~/.vibe/skills` | `${projectRoot}/.vibe/skills` | dedicated |
+| Mux | `mux` | `~/.mux/skills` | `${projectRoot}/.mux/skills` | dedicated |
+| Neovate | `neovate` | `~/.neovate/skills` | `${projectRoot}/.neovate/skills` | dedicated |
+| OpenHands | `openhands` | `~/.openhands/skills` | `${projectRoot}/.openhands/skills` | dedicated |
+| Pi | `pi` | `~/.pi/agent/skills` | `${projectRoot}/.pi/skills` | dedicated |
+| Qoder | `qoder` | `~/.qoder/skills` | `${projectRoot}/.qoder/skills` | dedicated |
+| Qwen Code | `qwen-code` | `~/.qwen/skills` | `${projectRoot}/.qwen/skills` | dedicated |
+| Replit | `replit` | `~/.config/agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Roo Code | `roo` | `~/.roo/skills` | `${projectRoot}/.roo/skills` | dedicated |
+| Trae CN | `trae-cn` | `~/.trae-cn/skills` | `${projectRoot}/.trae-cn/skills` | dedicated |
+| Warp | `warp` | `~/.agents/skills` | `${projectRoot}/.agents/skills` | universal |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/skills` | `${projectRoot}/.windsurf/skills` | dedicated |
+| Zencoder | `zencoder` | `~/.zencoder/skills` | `${projectRoot}/.zencoder/skills` | dedicated |
+| Pochi | `pochi` | `~/.pochi/skills` | `${projectRoot}/.pochi/skills` | dedicated |
+| AdaL | `adal` | `~/.adal/skills` | `${projectRoot}/.adal/skills` | dedicated |
+<!-- AGENT-TABLE-END -->
 
 Each registry entry includes:
 

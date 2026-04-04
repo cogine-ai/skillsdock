@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Added `skillsdock add <source>` command for lightweight remote/local skill installation:
+### Added
+
+- `skillsdock add <source>` — lightweight remote/local skill installation:
   - Supports GitHub `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
   - `--scope user|project` to control installation target (default: `user`)
   - `--dry-run` to preview installation without writing files
@@ -12,12 +14,37 @@
   - Installs skills to canonical `.agents/skills/<skill-name>/` directory
   - Creates symlinks to non-universal agent directories by default
   - Updates SkillsDock registry with installed skill metadata
-  - Updates `.skill-lock.json` lockfile for both user and project scopes
+  - Updates lockfiles for both user and project scopes
   - Validates `SKILL.md` frontmatter before installation; skips invalid files with warnings
   - Cleans up temporary clone directories in a `finally` block
-- Added `parseSource()` for parsing GitHub/GitLab URLs, `owner/repo` shorthand, and local paths
-- Added `writeExternalSkillLock()` for writing `.skill-lock.json` lockfiles
-- Added `computeSkillFolderHash()` for computing manifest-based folder hashes
+- Added `writeExternalSkillLock()` for writing user-scope `.skill-lock.json` lockfiles
+- `sync --from node_modules` — discover and sync skills from `node_modules` packages:
+  - `discoverNodeModuleSkills(projectRoot)` scans `node_modules` (including scoped `@org/pkg` packages) for `SKILL.md` files in package root, `skills/`, and `.agents/skills/` directories
+  - Incremental diff using SHA-256 hash comparison (`computeSkillFolderHash`): unchanged skills are skipped ("up to date"), new/changed skills are installed/updated
+  - Syncs to canonical `.agents/skills/<skill-name>/` directory
+  - Updates `skills-lock.json` with `sourceType: "node_modules"` and package name as `source`
+  - `--dry-run` support: prints planned actions without writing files
+  - `--scope user|project` support (defaults to `project`)
+  - Skips `.bin`, `.cache`, and other non-package directories in `node_modules`
+- Test suite `test/node-modules-sync.test.mjs` covering discovery, scoped packages, incremental skip, hash-change update, dry-run, and lockfile updates
+
+- `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
+- `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
+- `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
+- Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
+- Added `scripts/sync-agent-docs.mjs` to auto-generate agent tables in `README.md` and `COMPATIBILITY.md` from `bin/agent-registry.json`.
+- Added `scripts/validate-agent-registry.mjs` to validate registry data integrity (required fields, duplicate IDs, path format, scope completeness).
+- Added `registry:sync` and `registry:validate` npm scripts.
+- Added CI steps to validate agent registry and detect docs drift on every push/PR.
+- Wrapped existing agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync.
+- Added project-level `skills-lock.json` for deterministic skill tracking:
+  - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
+  - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
+  - `computeSkillFolderHash(skillDirPath)` — SHA-256 hash of a skill directory (path-aware, skips `.git`/`node_modules`)
+  - `updateLockfileEntry(projectRoot, skillName, entryData)` — upsert a single skill entry
+  - `removeLockfileEntry(projectRoot, skillName)` — remove a single skill entry
+- No timestamp fields in `skills-lock.json` to minimize git merge conflicts
+- Lockfile location: `${projectRoot}/skills-lock.json`
 
 ## 0.2.0
 

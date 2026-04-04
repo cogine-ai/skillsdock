@@ -19,7 +19,9 @@
   "scripts": {
     "skillsdock": "node ./bin/skillsdock.mjs",
     "test": "node --test",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "registry:sync": "node scripts/sync-agent-docs.mjs",
+    "registry:validate": "node scripts/validate-agent-registry.mjs"
   },
   "keywords": [
     "skills",

@@ -1896,6 +1896,7 @@ Usage:
   skillsdock inspect <id|key|path> [--registry <path>] [--json]
   skillsdock sync --to <agent|target> --scope <user|project> [--registry <path>] [--config <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
   skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
+  skillsdock sync --from node_modules [--scope user|project] [--dry-run]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
   skillsdock version
 
@@ -1911,6 +1912,7 @@ Examples:
   skillsdock add owner/repo --scope user
   skillsdock add owner/repo@skill-name --dry-run
   skillsdock add ./path/to/skills --scope project
+  skillsdock sync --from node_modules --dry-run
 `);
 }
 
@@ -3434,9 +3436,14 @@ async function createSymlink(filePath, sourcePath) {
  * @throws {Error} 当提供了无效的 --mode 或 --fallback 值时抛出。
  */
 async function cmdSync(flags, context) {
+  const fromInput = typeof flags.from === 'string' ? flags.from : undefined;
+  if (fromInput === 'node_modules' || fromInput === 'node-modules') {
+    return cmdSyncFromNodeModules(flags, context);
+  }
+
   const targetInput = flags.to || flags.target;
   if (!targetInput || typeof targetInput !== 'string') {
-    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>');
+    throw new Error('Usage: skillsdock sync --to <agent|target> --scope <user|project>\n       skillsdock sync --from node_modules [--scope user|project] [--dry-run]');
   }
 
   const projectRoot = context.projectRoot;
@@ -4305,6 +4312,422 @@ async function cmdAdd(flags, args, context) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Source Parser – classify & parse skill sources (add-command prep)  */
+/* ------------------------------------------------------------------ */
+
+function _parseGitHubUrlPath(pathname, base) {
+  const parts = pathname.split('/');
+  if (parts.length < 2) return { ...base, type: 'github' };
+
+  const owner = parts[0];
+  const repo = parts[1];
+  let branch = null;
+  let subpath = null;
+
+  if (parts.length > 3 && parts[2] === 'tree') {
+    branch = parts[3];
+    if (parts.length > 4) {
+      subpath = sanitizeSubpath(parts.slice(4).join('/'));
+    }
+  }
+
+  return { ...base, type: 'github', owner, repo, branch, subpath };
+}
+
+function _parseGitLabUrlPath(pathname, base) {
+  const parts = pathname.split('/');
+
+  let pathParts, branch = null, subpath = null;
+
+  const dashIdx = parts.indexOf('-');
+  if (dashIdx !== -1 && parts[dashIdx + 1] === 'tree') {
+    pathParts = parts.slice(0, dashIdx);
+    if (parts.length > dashIdx + 2) branch = parts[dashIdx + 2];
+    if (parts.length > dashIdx + 3) {
+      subpath = sanitizeSubpath(parts.slice(dashIdx + 3).join('/'));
+    }
+  } else {
+    pathParts = parts;
+  }
+
+  if (pathParts.length < 2) return { ...base, type: 'gitlab' };
+
+  const owner = pathParts.slice(0, -1).join('/');
+  const repo = pathParts[pathParts.length - 1];
+
+  return { ...base, type: 'gitlab', owner, repo, branch, subpath };
+}
+
+function _classifyHost(host) {
+  const h = String(host || '').toLowerCase();
+  if (h === 'github.com' || h.endsWith('.github.com')) return 'github';
+  if (h === 'gitlab.com' || h.endsWith('.gitlab.com')) return 'gitlab';
+  return 'git-ssh';
+}
+
+function _parseShorthand(input, base, type) {
+  let skillFilter = null;
+  let ownerRepo = input;
+
+  const atIdx = input.indexOf('@');
+  if (atIdx !== -1) {
+    skillFilter = input.slice(atIdx + 1) || null;
+    ownerRepo = input.slice(0, atIdx);
+  }
+
+  ownerRepo = ownerRepo.replace(/\/$/, '').replace(/\.git$/, '');
+
+  const parts = ownerRepo.split('/');
+  if (parts.length < 2) {
+    return { ...base, type, owner: parts[0] || null, repo: null, skillFilter };
+  }
+
+  const owner = type === 'gitlab' ? parts.slice(0, -1).join('/') : parts[0];
+  const repo = parts[parts.length - 1];
+
+  return { ...base, type, owner, repo, skillFilter };
+}
+
+function sanitizeSubpath(subpath) {
+  if (subpath == null) return subpath;
+  const normalized = String(subpath).replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+    throw new Error(`Absolute path detected in subpath: "${subpath}"`);
+  }
+  for (const seg of normalized.split('/')) {
+    if (seg === '..') {
+      throw new Error(`Path traversal detected in subpath: "${subpath}"`);
+    }
+  }
+  return normalized;
+}
+
+function parseSource(raw) {
+  if (!raw || typeof raw !== 'string' || !raw.trim()) {
+    throw new Error('Source argument is required and must be a non-empty string');
+  }
+
+  const trimmed = raw.trim();
+  const base = {
+    type: null,
+    owner: null,
+    repo: null,
+    branch: null,
+    subpath: null,
+    skillFilter: null,
+    raw: trimmed,
+  };
+
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('./') || trimmed.startsWith('.\\') ||
+    trimmed.startsWith('../') || trimmed.startsWith('..\\') ||
+    trimmed === '.' || trimmed === '..' ||
+    /^[A-Za-z]:[\\\/]/.test(trimmed)
+  ) {
+    return { ...base, type: 'local' };
+  }
+
+  const scpMatch = trimmed.match(/^git@([^:]+):(.+?)(?:\.git)?\/?$/);
+  const sshProtoMatch = !scpMatch && trimmed.match(/^ssh:\/\/(?:git@)?([^\/:]+)[\/:](.+?)(?:\.git)?\/?$/);
+  const sshMatch = scpMatch || sshProtoMatch;
+  if (sshMatch) {
+    const host = sshMatch[1];
+    const pathPart = sshMatch[2];
+    const segments = pathPart.split('/');
+    const type = _classifyHost(host);
+    if (segments.length >= 2) {
+      const owner = segments.slice(0, -1).join('/');
+      const repo = segments[segments.length - 1];
+      return { ...base, type, owner, repo };
+    }
+    return { ...base, type: 'git-ssh' };
+  }
+
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+    try {
+      const url = new URL(trimmed);
+      const hostname = url.hostname;
+      let pathname = url.pathname
+        .replace(/^\//, '')
+        .replace(/\/$/, '')
+        .replace(/\.git$/, '');
+
+      const hostType = _classifyHost(hostname);
+      if (hostType === 'github') {
+        return _parseGitHubUrlPath(pathname, base);
+      }
+      if (hostType === 'gitlab') {
+        return _parseGitLabUrlPath(pathname, base);
+      }
+
+      const parts = pathname.split('/');
+      if (parts.length >= 2) {
+        return { ...base, type: 'git-ssh', owner: parts[0], repo: parts[1] };
+      }
+      return { ...base, type: 'git-ssh' };
+    } catch {
+      // malformed URL – fall through
+    }
+  }
+
+  const prefixMatch = trimmed.match(/^(github|gitlab):(.+)$/);
+  if (prefixMatch) {
+    return _parseShorthand(prefixMatch[2], base, prefixMatch[1]);
+  }
+
+  if (/^[a-zA-Z\d](?:[a-zA-Z\d]|-(?=[a-zA-Z\d]))*\/[a-zA-Z\d._-]+(@[^\s\/]+)?$/.test(trimmed)) {
+    return _parseShorthand(trimmed, base, 'github');
+  }
+
+  return { ...base, type: 'local' };
+}
+
+function getOwnerRepo(parsed) {
+  if (!parsed || !parsed.owner || !parsed.repo) return null;
+  return `${parsed.owner}/${parsed.repo}`;
+}
+
+// ── Project-level lockfile (skills-lock.json) ──────────────────────────
+
+const PROJECT_LOCKFILE_NAME = 'skills-lock.json';
+
+function emptyLockData() {
+  return { version: 1, skills: {} };
+}
+
+async function readProjectLockfile(projectRoot) {
+  const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+  try {
+    const raw = await fs.readFile(lockPath, 'utf8');
+    if (raw.includes('<<<<<<<')) {
+      console.warn(`[skillsdock] ${PROJECT_LOCKFILE_NAME} contains merge-conflict markers – treating as empty`);
+      return emptyLockData();
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return emptyLockData();
+    const version = Number.isInteger(parsed.version) ? parsed.version : 1;
+    const skills =
+      parsed.skills && typeof parsed.skills === 'object' && !Array.isArray(parsed.skills)
+        ? parsed.skills
+        : {};
+    return { version, skills };
+  } catch (err) {
+    if (err?.code === 'ENOENT') return emptyLockData();
+    console.warn(`[skillsdock] Could not read ${PROJECT_LOCKFILE_NAME}: ${err.message ?? err} – treating as empty`);
+    return emptyLockData();
+  }
+}
+
+async function writeProjectLockfile(projectRoot, lockData) {
+  const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+  const sorted = {};
+  for (const key of Object.keys(lockData.skills).sort()) {
+    sorted[key] = lockData.skills[key];
+  }
+  const output = JSON.stringify({ version: lockData.version ?? 1, skills: sorted }, null, 2) + '\n';
+  await writeFileAtomic(lockPath, output);
+}
+
+async function computeSkillFolderHash(skillDirPath) {
+  const SKIP = new Set(['.git', 'node_modules']);
+  const entries = [];
+
+  async function walk(dir, rel) {
+    const items = await fs.readdir(dir, { withFileTypes: true });
+    for (const item of items) {
+      if (SKIP.has(item.name)) continue;
+      const full = path.join(dir, item.name);
+      const relPath = rel ? `${rel}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        await walk(full, relPath);
+      } else if (item.isFile()) {
+        entries.push(relPath);
+      }
+    }
+  }
+
+  await walk(skillDirPath, '');
+  entries.sort();
+
+  const hash = crypto.createHash('sha256');
+  for (const relPath of entries) {
+    const content = await fs.readFile(path.join(skillDirPath, relPath));
+    hash.update(`${Buffer.byteLength(relPath, 'utf8')}:`);
+    hash.update(relPath, 'utf8');
+    hash.update(`:${content.byteLength}:`);
+    hash.update(content);
+  }
+  return hash.digest('hex');
+}
+
+async function updateLockfileEntry(projectRoot, skillName, entryData) {
+  const lockData = await readProjectLockfile(projectRoot);
+  lockData.skills[skillName] = entryData;
+  await writeProjectLockfile(projectRoot, lockData);
+}
+
+async function removeLockfileEntry(projectRoot, skillName) {
+  const lockData = await readProjectLockfile(projectRoot);
+  delete lockData.skills[skillName];
+  await writeProjectLockfile(projectRoot, lockData);
+}
+
+// ── node_modules skill discovery + sync ─────────────────────────────────
+
+const NODE_MODULES_SKIP_DIRS = new Set(['.bin', '.cache', '.package-lock.json', '.staging', '.yarn-integrity']);
+const NODE_MODULES_SKILL_SEARCH_LOCATIONS = ['', 'skills', '.agents/skills'];
+
+async function discoverNodeModuleSkills(projectRoot) {
+  const nodeModulesDir = path.join(projectRoot, 'node_modules');
+  const results = [];
+
+  let topEntries;
+  try {
+    topEntries = await fs.readdir(nodeModulesDir, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === 'ENOENT') return results;
+    throw err;
+  }
+
+  const packageDirs = [];
+
+  for (const entry of topEntries) {
+    if (!entry.isDirectory()) continue;
+    if (NODE_MODULES_SKIP_DIRS.has(entry.name)) continue;
+
+    if (entry.name.startsWith('@')) {
+      let scopedEntries;
+      try {
+        scopedEntries = await fs.readdir(path.join(nodeModulesDir, entry.name), { withFileTypes: true });
+      } catch { continue; }
+      for (const sub of scopedEntries) {
+        if (sub.isDirectory()) {
+          packageDirs.push({ packageName: `${entry.name}/${sub.name}`, dir: path.join(nodeModulesDir, entry.name, sub.name) });
+        }
+      }
+    } else {
+      packageDirs.push({ packageName: entry.name, dir: path.join(nodeModulesDir, entry.name) });
+    }
+  }
+
+  for (const { packageName, dir } of packageDirs) {
+    for (const searchLoc of NODE_MODULES_SKILL_SEARCH_LOCATIONS) {
+      const searchDir = searchLoc ? path.join(dir, searchLoc) : dir;
+      const skillMdPath = path.join(searchDir, 'SKILL.md');
+
+      let exists;
+      try {
+        await fs.access(skillMdPath);
+        exists = true;
+      } catch { exists = false; }
+
+      if (!exists) continue;
+
+      const files = [];
+      try {
+        const items = await fs.readdir(searchDir, { withFileTypes: true });
+        for (const item of items) {
+          if (item.isFile()) files.push(item.name);
+        }
+      } catch { continue; }
+
+      const skillName = inferNameFromPath(skillMdPath);
+
+      results.push({
+        packageName,
+        skillName,
+        skillPath: searchDir,
+        files
+      });
+    }
+  }
+
+  return results;
+}
+
+async function cmdSyncFromNodeModules(flags, context) {
+  const projectRoot = context.projectRoot;
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const scope = typeof flags.scope === 'string' ? flags.scope : 'project';
+
+  if (!VALID_SCOPE_SET.has(scope)) {
+    throw new Error(`Invalid --scope value "${scope}". Use --scope user|project.`);
+  }
+
+  const discovered = await discoverNodeModuleSkills(projectRoot);
+
+  if (discovered.length === 0) {
+    console.log('No skills found in node_modules.');
+    return;
+  }
+
+  console.log(`Discovered ${discovered.length} skill(s) in node_modules.`);
+
+  const lockData = await readProjectLockfile(projectRoot);
+
+  const canonicalBase = resolveTemplatePath(getCanonicalSkillsPathTemplate(scope), { projectRoot });
+
+  const counters = { discovered: discovered.length, skipped: 0, installed: 0, updated: 0 };
+  const details = [];
+
+  for (const skill of discovered) {
+    const currentHash = await computeSkillFolderHash(skill.skillPath);
+    const lockEntry = lockData.skills[skill.skillName];
+    const previousHash = lockEntry?.computedHash;
+
+    if (previousHash && previousHash === currentHash) {
+      counters.skipped += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action: 'up to date' });
+      continue;
+    }
+
+    const isUpdate = Boolean(previousHash);
+    const destDir = path.join(canonicalBase, skill.skillName);
+
+    if (dryRun) {
+      const action = isUpdate ? 'would update' : 'would install';
+      counters[isUpdate ? 'updated' : 'installed'] += 1;
+      details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+      continue;
+    }
+
+    await fs.mkdir(destDir, { recursive: true });
+
+    for (const fileName of skill.files) {
+      const srcFile = path.join(skill.skillPath, fileName);
+      const destFile = path.join(destDir, fileName);
+      const content = await fs.readFile(srcFile, 'utf8');
+      await writeFileAtomic(destFile, content);
+    }
+
+    await updateLockfileEntry(projectRoot, skill.skillName, {
+      source: skill.packageName,
+      sourceType: 'node_modules',
+      computedHash: currentHash,
+      skillPath: path.relative(projectRoot, destDir)
+    });
+
+    const action = isUpdate ? 'updated' : 'installed';
+    counters[action] += 1;
+    details.push({ skillName: skill.skillName, packageName: skill.packageName, action, dest: destDir });
+  }
+
+  if (dryRun) {
+    console.log('\nDry run — no files written.\n');
+  }
+
+  for (const d of details) {
+    const dest = d.dest ? ` -> ${d.dest}` : '';
+    console.log(`  ${d.action}: ${d.skillName} (from ${d.packageName})${dest}`);
+  }
+
+  console.log(
+    `\nSummary: discovered=${counters.discovered} skipped=${counters.skipped} installed=${counters.installed} updated=${counters.updated}`
+  );
+}
+
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const { flags, positional } = parseArgs(argv);
   const command = positional[0];
@@ -4378,15 +4801,24 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
+  computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,
+  discoverNodeModuleSkills,
+  getOwnerRepo,
   normalizeRegistry,
   normalizeConfigV2,
   parseContentForFormat,
+  parseSource,
   planSyncWriteMode,
+  readProjectLockfile,
+  removeLockfileEntry,
   resolveSelectorMatches,
   resolveSyncTarget,
   resolveTemplatePath,
   pickPreferredCanonicalPath,
-  writeExternalSkillLock
+  sanitizeSubpath,
+  updateLockfileEntry,
+  writeExternalSkillLock,
+  writeProjectLockfile
 };
