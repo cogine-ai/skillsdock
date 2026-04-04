@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
+
 import {
   normalizeRegistry,
   readProjectLockfile,
@@ -522,5 +525,126 @@ test('remove: updates registry even when skill dir does not exist on disk', asyn
 
     const updatedReg = await readRegistry(registryPath);
     assert.equal(updatedReg.items[`path:${canonicalPath}`].policy.tag, 'deleted');
+  });
+});
+
+// ── Fix: --all with selector is rejected ─────────────────────────────────
+
+test('remove: --all with a positional selector throws', async () => {
+  await withTmpDir(async (base) => {
+    const registryPath = path.join(base, 'registry.json');
+    await writeRegistry(registryPath, buildRegistry({}));
+    const context = { cwd: base, projectRoot: base, homeDir: base };
+
+    await assert.rejects(
+      () => cmdRemove({ registry: registryPath, all: true, scope: 'user' }, ['some-skill'], context),
+      (err) => {
+        assert.match(err.message, /mutually exclusive/);
+        assert.equal(err.exitCode, 2);
+        return true;
+      }
+    );
+  });
+});
+
+// ── Fix: single selector + --scope filters by scope ──────────────────────
+
+test('remove: single selector with --scope filters matches to that scope', async () => {
+  await withTmpDir(async (base) => {
+    const homeDir = path.join(base, 'home');
+    const skillsBase = path.join(homeDir, '.agents', 'skills');
+    await setupSkillDir(homeDir, 'scoped-skill');
+    const registryPath = path.join(base, 'registry.json');
+    const canonicalPath = path.join(skillsBase, 'scoped-skill', 'SKILL.md');
+
+    const registry = buildRegistry({
+      [`path:${canonicalPath}`]: makeSkillItem('scoped-skill', canonicalPath, { scope: 'user' })
+    });
+    await writeRegistry(registryPath, registry);
+
+    const context = { cwd: base, projectRoot: base, homeDir };
+
+    await assert.rejects(
+      () => cmdRemove({ registry: registryPath, scope: 'project' }, ['scoped-skill'], context),
+      (err) => {
+        assert.match(err.message, /Skill not found/);
+        return true;
+      }
+    );
+
+    const updatedReg = await readRegistry(registryPath);
+    assert.equal(updatedReg.items[`path:${canonicalPath}`].policy.tag, 'regular', 'should not have been modified');
+  });
+});
+
+// ── Fix: no lockfile created when none exists ────────────────────────────
+
+test('remove: does not create skills-lock.json when it does not already exist', async () => {
+  await withTmpDir(async (base) => {
+    const homeDir = path.join(base, 'home');
+    const skillsBase = path.join(homeDir, '.agents', 'skills');
+    await setupSkillDir(homeDir, 'no-lock-skill');
+    const registryPath = path.join(base, 'registry.json');
+    const canonicalPath = path.join(skillsBase, 'no-lock-skill', 'SKILL.md');
+
+    const registry = buildRegistry({
+      [`path:${canonicalPath}`]: makeSkillItem('no-lock-skill', canonicalPath, { scope: 'user' })
+    });
+    await writeRegistry(registryPath, registry);
+
+    const lockPath = path.join(base, 'skills-lock.json');
+    assert.equal(fsSync.existsSync(lockPath), false, 'lockfile should not exist before remove');
+
+    const context = { cwd: base, projectRoot: base, homeDir };
+    await cmdRemove({ registry: registryPath, scope: 'user' }, ['no-lock-skill'], context);
+
+    assert.equal(fsSync.existsSync(lockPath), false, 'lockfile should not be created by remove');
+  });
+});
+
+// ── Fix: physical delete failure prevents registry/lockfile update ────────
+
+test('remove: does not update registry or lockfile when physical delete fails', async () => {
+  await withTmpDir(async (base) => {
+    const homeDir = path.join(base, 'home');
+    const skillsBase = path.join(homeDir, '.agents', 'skills');
+    const skillDir = await setupSkillDir(homeDir, 'perm-skill');
+    const registryPath = path.join(base, 'registry.json');
+    const canonicalPath = path.join(skillsBase, 'perm-skill', 'SKILL.md');
+
+    const lockData = {
+      version: 1,
+      skills: { 'perm-skill': { source: 'owner/repo', sourceType: 'github', computedHash: 'abc' } }
+    };
+    await writeFile(path.join(base, 'skills-lock.json'), JSON.stringify(lockData, null, 2) + '\n', 'utf8');
+
+    const registry = buildRegistry({
+      [`path:${canonicalPath}`]: makeSkillItem('perm-skill', canonicalPath, { scope: 'user' })
+    });
+    await writeRegistry(registryPath, registry);
+
+    await fs.chmod(skillsBase, 0o555);
+
+    const savedExitCode = process.exitCode;
+    const context = { cwd: base, projectRoot: base, homeDir };
+    try {
+      await cmdRemove({ registry: registryPath, scope: 'user' }, ['perm-skill'], context);
+    } catch {
+      // ignore
+    }
+    process.exitCode = savedExitCode;
+
+    await fs.chmod(skillsBase, 0o755);
+
+    const updatedReg = await readRegistry(registryPath);
+    const key = `path:${canonicalPath}`;
+    assert.notEqual(updatedReg.items[key].policy.tag, 'deleted',
+      'registry should NOT be updated to deleted when physical delete fails');
+
+    const updatedLock = await readProjectLockfile(base);
+    assert.ok(updatedLock.skills['perm-skill'],
+      'lockfile entry should NOT be removed when physical delete fails');
+
+    assert.equal(await pathExists(skillDir), true, 'skill directory should still exist');
   });
 });
