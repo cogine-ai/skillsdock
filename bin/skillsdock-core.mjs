@@ -556,6 +556,8 @@ function mapExternalSkillLockEntry(skillName, entry) {
     sourceUrl: normalizeOptionalString(entry.sourceUrl),
     skillPath: normalizeOptionalString(entry.skillPath),
     skillFolderHash: normalizeOptionalString(entry.skillFolderHash),
+    treeSha: normalizeOptionalString(entry.treeSha),
+    repoSubpath: normalizeOptionalString(entry.repoSubpath),
     installedAt: normalizeIsoOrNull(entry.installedAt),
     updatedAt: normalizeIsoOrNull(entry.updatedAt),
     pluginName: normalizePluginName(entry.pluginName)
@@ -632,7 +634,7 @@ async function readExternalSkillLock(homeDir = HOME) {
 async function writeExternalSkillLock(lockPath, entries) {
   const skills = {};
   for (const entry of entries) {
-    skills[entry.skillName] = {
+    const obj = {
       source: entry.source || null,
       sourceType: entry.sourceType || null,
       sourceUrl: entry.sourceUrl || null,
@@ -642,6 +644,9 @@ async function writeExternalSkillLock(lockPath, entries) {
       updatedAt: entry.updatedAt || null,
       pluginName: entry.pluginName || null
     };
+    if (entry.treeSha) obj.treeSha = entry.treeSha;
+    if (entry.repoSubpath) obj.repoSubpath = entry.repoSubpath;
+    skills[entry.skillName] = obj;
   }
   const data = {
     version: EXTERNAL_SKILL_LOCK_VERSION,
@@ -4236,6 +4241,15 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
+        let perSkillTreeSha = null;
+        if (repoRootDir && source.type === 'github') {
+          try {
+            perSkillTreeSha = computeLocalTreeFingerprint(repoRootDir, item.repoRelativeDir || '');
+          } catch {
+            // Non-fatal
+          }
+        }
+
         const entry = {
           skillName: item.skillName,
           source: sourceArg,
@@ -4247,6 +4261,8 @@ async function cmdAdd(flags, args, context) {
           updatedAt: now,
           pluginName: null
         };
+        if (perSkillTreeSha) entry.treeSha = perSkillTreeSha;
+        if (item.repoRelativeDir) entry.repoSubpath = item.repoRelativeDir;
 
         const idx = lockEntries.findIndex((e) => e.skillName === item.skillName);
         if (idx >= 0) {
@@ -5168,7 +5184,7 @@ function computeLocalTreeFingerprint(repoDir, subpath) {
 }
 
 async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
-  const { fetchFn } = options;
+  const { fetchFn, userLockSkills } = options;
   const token = options.token !== undefined ? options.token : resolveGitHubToken();
 
   const upToDate = [];
@@ -5181,18 +5197,24 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
     allEntries.push({ name, entry, scope: 'project' });
   }
 
+  if (userLockSkills && typeof userLockSkills === 'object') {
+    for (const [name, entry] of Object.entries(userLockSkills)) {
+      const existsAlready = allEntries.some((e) => e.name === name);
+      if (!existsAlready) {
+        allEntries.push({ name, entry, scope: 'registry' });
+      }
+    }
+  }
+
   if (registryItems && typeof registryItems === 'object') {
     for (const [key, item] of Object.entries(registryItems)) {
       if (item.externalSourceUrl && item.externalHash) {
         const registrySkillId = item.id || key;
         const registrySkillPath = item.externalSkillPath || item.skillPath || '';
-        const existsInLock = Object.entries(lockSkills).some(
-          ([lockName, e]) =>
-            e.sourceUrl === item.externalSourceUrl &&
-            (e.treeSha || e.computedHash) &&
-            (lockName === registrySkillId || e.skillPath === registrySkillPath)
+        const alreadyTracked = allEntries.some(
+          (e) => e.name === registrySkillId || (e.entry.skillPath && e.entry.skillPath === registrySkillPath)
         );
-        if (!existsInLock) {
+        if (!alreadyTracked) {
           allEntries.push({
             name: registrySkillId,
             entry: {
@@ -5305,6 +5327,7 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
 async function cmdCheck(flags, context) {
   const jsonMode = Boolean(flags.json);
   const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
   const fetchFn = context._fetchFn;
 
   const lockData = await readProjectLockfile(projectRoot);
@@ -5317,11 +5340,34 @@ async function cmdCheck(flags, context) {
     // Registry not available
   }
 
-  const result = await checkSkillUpdates(lockData.skills, registryItems, { fetchFn });
+  let userLockSkills = {};
+  try {
+    const extLock = await readExternalSkillLock(homeDir);
+    if (extLock.healthy && extLock.entriesByName.size > 0) {
+      for (const [name, entry] of extLock.entriesByName) {
+        if (entry.sourceUrl && entry.sourceType === 'github') {
+          userLockSkills[name] = {
+            source: entry.source,
+            sourceType: entry.sourceType,
+            sourceUrl: entry.sourceUrl,
+            computedHash: entry.skillFolderHash,
+            treeSha: entry.treeSha || null,
+            repoSubpath: entry.repoSubpath || null,
+            skillPath: entry.skillPath
+          };
+        }
+      }
+    }
+  } catch {
+    // External lock not available
+  }
+
+  const result = await checkSkillUpdates(lockData.skills, registryItems, { fetchFn, userLockSkills });
 
   if (
     Object.keys(lockData.skills).length === 0 &&
-    Object.keys(registryItems).length === 0
+    Object.keys(registryItems).length === 0 &&
+    Object.keys(userLockSkills).length === 0
   ) {
     if (jsonMode) {
       console.log(JSON.stringify({ upToDate: [], updatesAvailable: [], skipped: [] }, null, 2));
@@ -5388,14 +5434,41 @@ async function cmdUpdate(flags, args, context) {
     // Registry not available
   }
 
-  if (Object.keys(lockData.skills).length === 0 && Object.keys(registryItems).length === 0) {
+  let userLockSkills = {};
+  try {
+    const extLock = await readExternalSkillLock(homeDir);
+    if (extLock.healthy && extLock.entriesByName.size > 0) {
+      for (const [name, entry] of extLock.entriesByName) {
+        if (entry.sourceUrl && entry.sourceType === 'github') {
+          userLockSkills[name] = {
+            source: entry.source,
+            sourceType: entry.sourceType,
+            sourceUrl: entry.sourceUrl,
+            computedHash: entry.skillFolderHash,
+            treeSha: entry.treeSha || null,
+            repoSubpath: entry.repoSubpath || null,
+            skillPath: entry.skillPath
+          };
+        }
+      }
+    }
+  } catch {
+    // External lock not available
+  }
+
+  if (
+    Object.keys(lockData.skills).length === 0 &&
+    Object.keys(registryItems).length === 0 &&
+    Object.keys(userLockSkills).length === 0
+  ) {
     console.log("No tracked skills found. Use 'skillsdock add' to install skills first.");
     return;
   }
 
   const checkSkills = scope === 'project' ? lockData.skills : {};
   const checkRegistry = scope === 'user' ? registryItems : {};
-  const result = await checkSkillUpdates(checkSkills, checkRegistry, { fetchFn });
+  const checkUserLock = scope === 'user' ? userLockSkills : {};
+  const result = await checkSkillUpdates(checkSkills, checkRegistry, { fetchFn, userLockSkills: checkUserLock });
 
   const scopeFiltered = result.updatesAvailable.filter((u) => {
     if (scope === 'project') return u.scope === 'project';
@@ -5507,6 +5580,8 @@ async function cmdUpdate(flags, args, context) {
         }
         const now = new Date().toISOString();
         const existing = lockEntries.find((e) => e.skillName === u.name);
+        const repoDir = path.join(tmpDir, 'repo');
+        const skillRepoSubpath = path.relative(repoDir, match.skillDir) || null;
         const newEntry = {
           skillName: u.name,
           source: entry.source,
@@ -5518,6 +5593,8 @@ async function cmdUpdate(flags, args, context) {
           updatedAt: now,
           pluginName: existing?.pluginName || null
         };
+        if (newTreeSha) newEntry.treeSha = newTreeSha;
+        if (skillRepoSubpath) newEntry.repoSubpath = skillRepoSubpath;
         const idx = lockEntries.findIndex((e) => e.skillName === u.name);
         if (idx >= 0) {
           lockEntries[idx] = newEntry;

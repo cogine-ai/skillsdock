@@ -845,3 +845,51 @@ test('checkSkillUpdates uses per-skill repoSubpath for fingerprinting', async ()
   assert.equal(result.upToDate.length, 1, 'skill-b should be up to date');
   assert.equal(result.upToDate[0].name, 'skill-b');
 });
+
+test('checkSkillUpdates uses userLockSkills with treeSha for user-scope freshness', async () => {
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
+  const userLockSkills = {
+    'user-skill': {
+      source: 'owner/repo',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      computedHash: 'local-content-hash',
+      treeSha: currentTreeSha,
+      skillPath: 'user-skill/SKILL.md'
+    }
+  };
+
+  const result = await checkSkillUpdates({}, {}, {
+    fetchFn: makeFetchFn(MOCK_TREE),
+    token: null,
+    userLockSkills
+  });
+
+  assert.equal(result.upToDate.length, 1, 'user-skill should be up to date');
+  assert.equal(result.upToDate[0].name, 'user-skill');
+  assert.equal(result.updatesAvailable.length, 0);
+});
+
+test('checkSkillUpdates detects user-scope update when remote tree changes', async () => {
+  const oldTreeSha = computeTreeFingerprint(MOCK_TREE, '');
+  const userLockSkills = {
+    'user-skill': {
+      source: 'owner/repo',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      computedHash: 'local-content-hash',
+      treeSha: oldTreeSha,
+      skillPath: 'user-skill/SKILL.md'
+    }
+  };
+
+  const result = await checkSkillUpdates({}, {}, {
+    fetchFn: makeFetchFn(UPDATED_TREE),
+    token: null,
+    userLockSkills
+  });
+
+  assert.equal(result.updatesAvailable.length, 1);
+  assert.equal(result.updatesAvailable[0].name, 'user-skill');
+  assert.equal(result.upToDate.length, 0);
+});
