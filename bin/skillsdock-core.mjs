@@ -1895,6 +1895,8 @@ Usage:
   skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
   skillsdock inspect <id|key|path> [--registry <path>] [--json]
   skillsdock sync --to <agent|target> --scope <user|project> [--registry <path>] [--config <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+  skillsdock remove <selector> [--scope <user|project>] [--dry-run] [--force] [--all-copies]
+  skillsdock remove --all --scope <user|project> [--dry-run] [--force]
   skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
   skillsdock sync --from node_modules [--scope user|project] [--dry-run]
   skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
@@ -4592,6 +4594,288 @@ async function removeLockfileEntry(projectRoot, skillName) {
   await writeProjectLockfile(projectRoot, lockData);
 }
 
+// ── remove command ──────────────────────────────────────────────────────
+
+async function findSymlinksPointingTo(targetRealPath, searchBase) {
+  const found = [];
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          const linkTarget = await fs.readlink(full);
+          const resolved = path.resolve(path.dirname(full), linkTarget);
+          const resolvedReal = (await getRealpathOrNull(resolved)) || resolved;
+          if (resolvedReal === targetRealPath || resolved === targetRealPath) {
+            found.push(full);
+          }
+        } catch {}
+      } else if (entry.isDirectory()) {
+        await walk(full);
+      }
+    }
+  }
+  await walk(searchBase);
+  return found;
+}
+
+function getSkillCanonicalDir(item, scope, projectRoot) {
+  const aliases = getItemSourceAliases(item);
+  const scopeAlias = aliases.find((a) => a.scope === scope) || aliases[0];
+  const effectiveScope = scopeAlias?.scope || scope || 'user';
+  const template = getCanonicalSkillsPathTemplate(effectiveScope);
+  return resolveTemplatePath(template, { projectRoot });
+}
+
+async function collectRemoveTargets(item, scope, projectRoot, homeDir) {
+  const targets = { files: [], symlinks: [] };
+  const canonicalBase = resolveTemplatePath(
+    getCanonicalSkillsPathTemplate(scope),
+    { projectRoot, homeDir }
+  );
+  const skillDir = path.join(canonicalBase, item.id);
+  const skillDirExists = await pathExists(skillDir);
+  if (skillDirExists) {
+    targets.files.push(skillDir);
+  }
+
+  const skillDirReal = skillDirExists ? (await getRealpathOrNull(skillDir)) || skillDir : skillDir;
+
+  for (const agent of AGENT_REGISTRY.agents) {
+    if (isUniversalAgent(agent.id)) continue;
+    const scopeCfg = agent.scopes?.[scope];
+    if (!scopeCfg?.target) continue;
+
+    const agentBase = resolveTemplatePath(scopeCfg.target.path, { projectRoot, homeDir });
+    if (!await pathExists(agentBase)) continue;
+
+    const layout = scopeCfg.target.layout || 'nested';
+    let candidatePath;
+    if (layout === 'flat') {
+      const ext = scopeCfg.target.extension || '.md';
+      candidatePath = path.join(agentBase, `${item.id}${ext}`);
+    } else {
+      const filename = scopeCfg.target.filename || 'SKILL.md';
+      candidatePath = path.join(agentBase, item.id, filename);
+    }
+
+    try {
+      const stat = await fs.lstat(candidatePath);
+      if (stat.isSymbolicLink()) {
+        const linkTarget = await fs.readlink(candidatePath);
+        const resolved = path.resolve(path.dirname(candidatePath), linkTarget);
+        const resolvedReal = (await getRealpathOrNull(resolved)) || resolved;
+        if (resolvedReal === skillDirReal || resolved.startsWith(skillDir)) {
+          targets.symlinks.push(candidatePath);
+        }
+      }
+    } catch {}
+
+    if (layout === 'nested') {
+      const nestedDir = path.join(agentBase, item.id);
+      try {
+        const stat = await fs.lstat(nestedDir);
+        if (stat.isSymbolicLink()) {
+          const linkTarget = await fs.readlink(nestedDir);
+          const resolved = path.resolve(path.dirname(nestedDir), linkTarget);
+          const resolvedReal = (await getRealpathOrNull(resolved)) || resolved;
+          if (resolvedReal === skillDirReal || resolved.startsWith(skillDir)) {
+            targets.symlinks.push(nestedDir);
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return targets;
+}
+
+function isPathUnderBase(targetPath, basePath) {
+  const normalizedTarget = path.resolve(targetPath);
+  const normalizedBase = path.resolve(basePath);
+  return normalizedTarget === normalizedBase || normalizedTarget.startsWith(normalizedBase + path.sep);
+}
+
+async function cmdRemove(flags, args, context) {
+  const isAll = Boolean(flags.all);
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun);
+  const force = Boolean(flags.force);
+  const scope = typeof flags.scope === 'string' ? flags.scope : undefined;
+
+  if (isAll && args.length > 0) {
+    throw makeCliError('--all and <selector> are mutually exclusive. Use one or the other.', 2);
+  }
+  if (isAll && !scope) {
+    throw makeCliError('--all requires --scope user|project', 2);
+  }
+  if (!isAll && args.length === 0) {
+    throw makeCliError('Usage: skillsdock remove <selector> [--scope user|project] [--dry-run] [--force]', 2);
+  }
+  if (scope && !VALID_SCOPE_SET.has(scope)) {
+    throw makeCliError(`Invalid --scope "${scope}". Use --scope user|project.`, 2);
+  }
+
+  const projectRoot = context.projectRoot;
+  const homeDir = context.homeDir || HOME;
+  const { registryPath, registry } = await loadRegistry(flags.registry);
+
+  let matches;
+  if (isAll) {
+    const items = getRegistryItems(registry).filter((item) => !isDeleted(item));
+    matches = scope ? items.filter((item) => itemMatchesSourceScope(item, scope)) : items;
+  } else {
+    const selector = args[0];
+    matches = resolveSelectorMatches(registry, selector, {
+      allCopies: Boolean(flags['all-copies'] || flags.allCopies),
+      includeDeleted: false
+    });
+    if (scope) {
+      matches = matches.filter((item) => itemMatchesSourceScope(item, scope));
+    }
+    if (matches.length === 0) {
+      throw makeCliError(`Skill not found: ${selector}`, 2);
+    }
+  }
+
+  const scopesToProcess = scope ? [scope] : ['user', 'project'];
+
+  const counters = { files: 0, symlinks: 0, registryUpdated: 0, lockfileUpdated: 0, failed: 0 };
+  const actions = [];
+  const skipped = [];
+
+  let lockfileExists = false;
+  if (projectRoot) {
+    const lockPath = path.join(projectRoot, PROJECT_LOCKFILE_NAME);
+    lockfileExists = await pathExists(lockPath);
+  }
+
+  for (const match of matches) {
+    if (isFrozen(match) && !force) {
+      skipped.push({ id: match.id, reason: 'frozen (use --force to override)' });
+      continue;
+    }
+
+    for (const s of scopesToProcess) {
+      const targets = await collectRemoveTargets(match, s, projectRoot, homeDir);
+
+      for (const symlink of targets.symlinks) {
+        actions.push({ type: 'symlink', path: symlink, skill: match.id, key: match.key, scope: s });
+      }
+
+      for (const filePath of targets.files) {
+        const canonicalBase = resolveTemplatePath(
+          getCanonicalSkillsPathTemplate(s),
+          { projectRoot, homeDir }
+        );
+        if (!isPathUnderBase(filePath, canonicalBase)) continue;
+        actions.push({ type: 'file', path: filePath, skill: match.id, key: match.key, scope: s });
+      }
+    }
+
+    actions.push({ type: 'registry', key: match.key, skill: match.id });
+    if (projectRoot && lockfileExists) {
+      actions.push({ type: 'lockfile', skill: match.id, key: match.key, projectRoot });
+    }
+  }
+
+  if (dryRun) {
+    console.log('Dry run — the following actions would be performed:');
+    for (const action of actions) {
+      if (action.type === 'symlink') {
+        console.log(`  [delete symlink] ${action.path}`);
+      } else if (action.type === 'file') {
+        console.log(`  [delete dir]     ${action.path}`);
+      } else if (action.type === 'registry') {
+        console.log(`  [tag deleted]    registry key=${action.key}`);
+      } else if (action.type === 'lockfile') {
+        console.log(`  [lockfile]       remove "${action.skill}" from ${PROJECT_LOCKFILE_NAME}`);
+      }
+    }
+    for (const s of skipped) {
+      console.log(`  [skipped]        ${s.id}: ${s.reason}`);
+    }
+    console.log(`\nSummary: ${actions.filter((a) => a.type === 'file').length} dir(s), ${actions.filter((a) => a.type === 'symlink').length} symlink(s), ${actions.filter((a) => a.type === 'registry').length} registry update(s)`);
+    return;
+  }
+
+  const failedKeys = new Set();
+
+  for (const action of actions) {
+    if (action.type === 'symlink') {
+      try {
+        await fs.unlink(action.path);
+        counters.symlinks++;
+      } catch (err) {
+        if (err?.code === 'ENOENT') {
+          continue;
+        }
+        console.warn(`Error: failed to remove symlink ${action.path}: ${err.message}`);
+        failedKeys.add(action.key);
+        counters.failed++;
+      }
+    } else if (action.type === 'file') {
+      try {
+        await fs.rm(action.path, { recursive: true });
+        counters.files++;
+      } catch (err) {
+        if (err?.code === 'ENOENT') {
+          continue;
+        }
+        console.warn(`Error: failed to remove ${action.path}: ${err.message}`);
+        failedKeys.add(action.key);
+        counters.failed++;
+      }
+    }
+  }
+
+  for (const action of actions) {
+    if (action.type === 'registry') {
+      if (failedKeys.has(action.key)) continue;
+      const key = action.key;
+      if (registry.items[key]) {
+        const now = new Date().toISOString();
+        registry.items[key] = {
+          ...registry.items[key],
+          policy: { tag: 'deleted', reason: 'removed by skillsdock remove', updatedAt: now }
+        };
+        counters.registryUpdated++;
+      }
+    } else if (action.type === 'lockfile') {
+      if (failedKeys.has(action.key)) continue;
+      try {
+        await removeLockfileEntry(action.projectRoot, action.skill);
+        counters.lockfileUpdated++;
+      } catch (err) {
+        console.warn(`Warning: failed to update lockfile for "${action.skill}": ${err.message}`);
+      }
+    }
+  }
+
+  if (counters.registryUpdated > 0) {
+    const now = new Date().toISOString();
+    registry.updatedAt = now;
+    rebuildRegistryIndexes(registry);
+    await writeJson(registryPath, registry);
+  }
+
+  for (const s of skipped) {
+    console.log(`Skipped: ${s.id} — ${s.reason}`);
+  }
+
+  console.log(
+    `Removed ${counters.files} dir(s), ${counters.symlinks} symlink(s), updated ${counters.registryUpdated} registry entry(ies), updated ${counters.lockfileUpdated} lockfile entry(ies)${counters.failed > 0 ? `, failed ${counters.failed}` : ''}`
+  );
+  if (counters.failed > 0) {
+    process.exitCode = 1;
+  }
+}
+
 // ── node_modules skill discovery + sync ─────────────────────────────────
 
 const NODE_MODULES_SKIP_DIRS = new Set(['.bin', '.cache', '.package-lock.json', '.staging', '.yarn-integrity']);
@@ -4809,6 +5093,10 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     await cmdDoctor(flags, context);
     return;
   }
+  if (command === 'remove') {
+    await cmdRemove(flags, args, context);
+    return;
+  }
 
   throw new Error(`Unknown command: ${command}`);
 }
@@ -4819,6 +5107,7 @@ export {
   buildDefaultConfig,
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
+  cmdRemove,
   computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,

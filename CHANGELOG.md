@@ -4,6 +4,16 @@
 
 ### Added
 
+- `skillsdock remove <selector>` — new command to clean up installed skill files, symlinks, and registry/lockfile entries:
+  - Resolves skills by id, key, or path via `resolveSelectorMatches()`
+  - Deletes canonical skill directories under `.agents/skills/`
+  - Scans and removes symlinks from non-universal agent directories that point to the canonical skill
+  - Sets registry tag to `deleted` and removes lockfile entries
+  - `--scope user|project` — restrict removal to a specific scope
+  - `--all --scope <scope>` — remove all skills in the given scope
+  - `--dry-run` — preview actions without modifying files
+  - `--force` — override `frozen` tag protection
+- Test suite `test/remove-command.test.mjs` covering normal removal, frozen protection, `--force`, `--dry-run`, `--all`, lockfile updates, registry tag updates, project scope, and error handling.
 - `skillsdock add <source>` — lightweight remote/local skill installation:
   - Supports GitHub `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
   - `--scope user|project` to control installation target (default: `user`)
