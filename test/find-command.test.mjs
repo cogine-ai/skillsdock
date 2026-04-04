@@ -4,7 +4,9 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { cmdFind, searchSkills } from '../bin/skillsdock-core.mjs';
+import { Readable, Writable } from 'node:stream';
+
+import { cmdFind, cmdFindInteractive, searchSkills } from '../bin/skillsdock-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -91,6 +93,22 @@ test('searchSkills: tolerates missing fields with defaults', async () => {
   assert.equal(results[0].description, '-');
   assert.equal(results[1].name, '-');
   assert.equal(results[2].description, 'only desc');
+});
+
+test('searchSkills: filters out non-object elements (null, primitives)', async () => {
+  const mockFetch = makeMockFetch([null, 'string', 42, { name: 'valid', source: 'owner/repo', description: 'ok' }, undefined]);
+  const results = await searchSkills('test', { fetch: mockFetch });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].name, 'valid');
+});
+
+test('searchSkills: treats non-string property values as missing', async () => {
+  const mockFetch = makeMockFetch([{ name: 123, source: true, description: null }]);
+  const results = await searchSkills('test', { fetch: mockFetch });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].name, '-');
+  assert.equal(results[0].source, '-');
+  assert.equal(results[0].description, '-');
 });
 
 test('searchSkills: network error throws CliError', async () => {
@@ -290,4 +308,150 @@ test('searchSkills: passes query and limit in URL', async () => {
   await searchSkills('my query', { fetch: mockFetch, limit: 5 });
   assert.ok(capturedUrl.includes('q=my%20query'));
   assert.ok(capturedUrl.includes('limit=5'));
+});
+
+// ── cmdFindInteractive tests ──
+
+function makeFakeStdin() {
+  const stream = new Readable({ read() {} });
+  stream.isTTY = true;
+  stream.setRawMode = () => stream;
+  return stream;
+}
+
+function makeFakeStdout() {
+  let buf = '';
+  const stream = new Writable({
+    write(chunk, _enc, cb) {
+      buf += chunk.toString();
+      cb();
+    }
+  });
+  stream.isTTY = true;
+  stream.columns = 120;
+  stream.getContent = () => buf;
+  return stream;
+}
+
+test('cmdFindInteractive: submits query on Enter and displays results', async () => {
+  const fakeStdin = makeFakeStdin();
+  const fakeStdout = makeFakeStdout();
+  let searchCount = 0;
+  const mockFetch = makeMockFetch(MOCK_RESULTS);
+  const wrappedFetch = async (...a) => {
+    searchCount++;
+    return mockFetch(...a);
+  };
+
+  const p = cmdFindInteractive({
+    fetch: wrappedFetch,
+    stdin: fakeStdin,
+    stdout: fakeStdout
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push('typescript\n');
+
+  await p;
+  assert.ok(searchCount >= 1, 'searchSkills should have been called at least once');
+  fakeStdin.destroy();
+});
+
+test('cmdFindInteractive: empty input resolves without searching', async () => {
+  const fakeStdin = makeFakeStdin();
+  const fakeStdout = makeFakeStdout();
+  let searchCount = 0;
+  const mockFetch = async () => {
+    searchCount++;
+    return { ok: true, status: 200, json: async () => [] };
+  };
+
+  const p = cmdFindInteractive({
+    fetch: mockFetch,
+    stdin: fakeStdin,
+    stdout: fakeStdout
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push('\n');
+
+  await p;
+  assert.equal(searchCount, 0, 'No search should be triggered for empty input');
+  fakeStdin.destroy();
+});
+
+test('cmdFindInteractive: early stream close resolves cleanly', async () => {
+  const fakeStdin = makeFakeStdin();
+  const fakeStdout = makeFakeStdout();
+  let searchCount = 0;
+  const mockFetch = async () => {
+    searchCount++;
+    return { ok: true, status: 200, json: async () => MOCK_RESULTS };
+  };
+
+  const p = cmdFindInteractive({
+    fetch: mockFetch,
+    stdin: fakeStdin,
+    stdout: fakeStdout
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push(null);
+
+  await p;
+  assert.equal(searchCount, 0, 'No pending search should run after stream close');
+});
+
+test('cmdFindInteractive: debounce collapses rapid keystrokes into fewer searches', async () => {
+  const fakeStdin = makeFakeStdin();
+  const fakeStdout = makeFakeStdout();
+  let searchCount = 0;
+  const mockFetch = async () => {
+    searchCount++;
+    return { ok: true, status: 200, json: async () => MOCK_RESULTS };
+  };
+
+  const p = cmdFindInteractive({
+    fetch: mockFetch,
+    stdin: fakeStdin,
+    stdout: fakeStdout
+  });
+
+  await new Promise((r) => setTimeout(r, 30));
+
+  fakeStdin.push('t');
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push('y');
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push('p');
+  await new Promise((r) => setTimeout(r, 50));
+
+  const countBeforeEnter = searchCount;
+
+  fakeStdin.push('\n');
+  await p;
+
+  assert.ok(countBeforeEnter <= 2, `Expected debounce to collapse keystrokes, got ${countBeforeEnter} calls before Enter`);
+  fakeStdin.destroy();
+});
+
+test('cmdFindInteractive: network error rejects the promise', async () => {
+  const fakeStdin = makeFakeStdin();
+  const fakeStdout = makeFakeStdout();
+  const mockFetch = makeMockFetch(null, { shouldThrow: true });
+
+  const p = cmdFindInteractive({
+    fetch: mockFetch,
+    stdin: fakeStdin,
+    stdout: fakeStdout
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  fakeStdin.push('test\n');
+
+  await assert.rejects(p, (err) => {
+    assert.ok(err.message.includes('Unable to reach skills.sh'));
+    return true;
+  });
+  fakeStdin.destroy();
 });

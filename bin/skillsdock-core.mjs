@@ -5077,11 +5077,13 @@ async function searchSkills(query, options = {}) {
     results = [];
   }
 
-  return results.map((item) => ({
-    name: item.name || '-',
-    source: item.source || '-',
-    description: item.description || '-'
-  }));
+  return results
+    .filter((item) => typeof item === 'object' && item !== null)
+    .map((item) => ({
+      name: typeof item.name === 'string' ? item.name : '-',
+      source: typeof item.source === 'string' ? item.source : '-',
+      description: typeof item.description === 'string' ? item.description : '-'
+    }));
 }
 
 function formatFindResults(skills, query) {
@@ -5112,34 +5114,55 @@ async function cmdFindInteractive(options = {}) {
   const { createInterface } = await import('node:readline');
 
   const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout
+    input: options.stdin || process.stdin,
+    output: options.stdout || process.stdout
   });
 
   let debounceTimer = null;
+  let settled = false;
 
   const doSearch = async (query) => {
     if (!query || !query.trim()) return;
     try {
       const results = await searchSkills(query.trim(), { fetch: fetchFn });
       if (results.length === 0) {
-        process.stdout.write(`\nNo skills found matching "${query.trim()}".\n`);
+        (options.stdout || process.stdout).write(`\nNo skills found matching "${query.trim()}".\n`);
       } else {
-        process.stdout.write('\n' + formatFindResults(results, query.trim()) + '\n');
+        (options.stdout || process.stdout).write('\n' + formatFindResults(results, query.trim()) + '\n');
       }
     } catch {
       // Swallow errors during live search; final Enter search will report them
     }
   };
 
-  return new Promise((resolve) => {
-    rl.question('Search skills: ', async (answer) => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      rl.close();
+  const stdinSource = options.stdin || process.stdin;
+  const onData = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    const currentLine = rl.line || '';
+    if (currentLine.trim()) {
+      debounceTimer = setTimeout(() => doSearch(currentLine), SEARCH_DEBOUNCE_MS);
+    }
+  };
 
+  const cleanup = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = null;
+    stdinSource.removeListener('data', onData);
+  };
+
+  return new Promise((resolve, reject) => {
+    const settle = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err); else resolve();
+    };
+
+    rl.question('Search skills: ', async (answer) => {
       const query = (answer || '').trim();
       if (!query) {
-        resolve();
+        rl.close();
+        settle();
         return;
       }
 
@@ -5150,24 +5173,18 @@ async function cmdFindInteractive(options = {}) {
         } else {
           console.log(formatFindResults(results, query));
         }
+        settle();
       } catch (err) {
-        throw err;
+        settle(err);
       }
-      resolve();
+      rl.close();
     });
 
     rl.on('close', () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      resolve();
+      settle();
     });
 
-    process.stdin.on('data', () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      const currentLine = rl.line || '';
-      if (currentLine.trim()) {
-        debounceTimer = setTimeout(() => doSearch(currentLine), SEARCH_DEBOUNCE_MS);
-      }
-    });
+    stdinSource.on('data', onData);
   });
 }
 
@@ -5289,6 +5306,7 @@ export {
   buildDoctorAgentMatrixRows,
   buildCleanupPlan,
   cmdFind,
+  cmdFindInteractive,
   cmdRemove,
   searchSkills,
   computeSkillFolderHash,
