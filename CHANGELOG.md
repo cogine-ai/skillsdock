@@ -4,6 +4,20 @@
 
 ### Added
 
+- `skillsdock add <source>` — lightweight remote/local skill installation:
+  - Supports GitHub `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
+  - `--scope user|project` to control installation target (default: `user`)
+  - `--dry-run` to preview installation without writing files
+  - `--copy` to force copy mode instead of agent symlinks
+  - Clones GitHub repos with `git clone --depth 1 --single-branch` for minimal bandwidth
+  - Scans cloned/local directories for `SKILL.md` files (root, `skills/`, `.agents/skills/`)
+  - Installs skills to canonical `.agents/skills/<skill-name>/` directory
+  - Creates symlinks to non-universal agent directories by default
+  - Updates SkillsDock registry with installed skill metadata
+  - Updates lockfiles for both user and project scopes
+  - Validates `SKILL.md` frontmatter before installation; skips invalid files with warnings
+  - Cleans up temporary clone directories in a `finally` block
+- Added `writeExternalSkillLock()` for writing user-scope `.skill-lock.json` lockfiles
 - `sync --from node_modules` — discover and sync skills from `node_modules` packages:
   - `discoverNodeModuleSkills(projectRoot)` scans `node_modules` (including scoped `@org/pkg` packages) for `SKILL.md` files in package root, `skills/`, and `.agents/skills/` directories
   - Incremental diff using SHA-256 hash comparison (`computeSkillFolderHash`): unchanged skills are skipped ("up to date"), new/changed skills are installed/updated

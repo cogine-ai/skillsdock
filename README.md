@@ -106,6 +106,18 @@ skillsdock cleanup --plan
 # dry-run sync to OpenClaw user scope
 skillsdock sync --to openclaw --scope user --dry-run
 
+# install skills from a GitHub repo
+skillsdock add owner/repo --scope user
+
+# install a specific skill from a repo
+skillsdock add owner/repo@skill-name
+
+# install from a local directory
+skillsdock add ./path/to/skills --scope project
+
+# preview what would be installed
+skillsdock add owner/repo --dry-run
+
 # inspect built-in agent compatibility + detection
 skillsdock doctor --agents
 ```
@@ -125,6 +137,7 @@ skillsdock cleanup --rollback <runId> [--registry <path>]
 skillsdock list [--config <path>] [--registry <path>] [--source <name>] [--changed] [--all] [--json]
 skillsdock inspect <id|key|path> [--registry <path>] [--json]
 skillsdock sync --to <agent|target> --scope <user|project> [--config <path>] [--registry <path>] [--mode <symlink|copy>] [--fallback <copy|fail>] [--dry-run] [--all]
+skillsdock add <source> [--scope user|project] [--dry-run] [--copy]
 skillsdock sync --from node_modules [--scope user|project] [--dry-run]
 skillsdock doctor [--config <path>] [--registry <path>] [--agents] [--skills-spec]
 skillsdock version
@@ -155,6 +168,55 @@ For `skill-md` universal agents, the default config also seeds canonical scan so
 
 - `agents-user` -> `~/.agents/skills`
 - `agents-project` -> `${projectRoot}/.agents/skills`
+
+## Add Command
+
+`skillsdock add <source>` installs skills from a remote repository or local directory into the canonical `.agents/skills` directory.
+
+### Source Formats
+
+- `owner/repo` — GitHub shorthand, installs all SKILL.md files from the repository
+- `owner/repo@skill-name` — Install a specific skill from a repository
+- `https://github.com/owner/repo/tree/branch/path` — Full GitHub URL with optional branch and subpath
+- `https://gitlab.com/owner/repo/-/tree/branch/path` — Full GitLab URL
+- `./path/to/skills` or `/absolute/path` — Install from a local directory
+
+### Options
+
+- `--scope user|project` — Installation target (default: `user`)
+  - `user`: installs to `~/.agents/skills/<skill-name>/`
+  - `project`: installs to `${projectRoot}/.agents/skills/<skill-name>/`
+- `--dry-run` — Preview what would be installed without writing files
+- `--copy` — Force copy mode; skip creating symlinks to non-universal agent directories
+
+### Behavior
+
+- GitHub/GitLab sources are cloned with `git clone --depth 1 --single-branch`
+- SKILL.md files are discovered in the root, `skills/`, and `.agents/skills/` directories
+- Each skill is validated (frontmatter must include `name` and `description`); invalid files are skipped with a warning
+- Skills are copied to the canonical directory; by default, symlinks are created in non-universal agent directories
+- The SkillsDock registry is updated with installed skill metadata
+- The `.skill-lock.json` lockfile is updated for the active scope
+- Temporary clone directories are always cleaned up
+
+### Examples
+
+```bash
+# install all skills from a GitHub repo to user scope
+skillsdock add acme/awesome-skills
+
+# install one specific skill
+skillsdock add acme/awesome-skills@lint-check
+
+# install from a specific branch + path
+skillsdock add https://github.com/acme/skills/tree/v2/curated
+
+# install from local directory to project scope
+skillsdock add ./my-skills --scope project
+
+# preview without writing
+skillsdock add acme/awesome-skills --dry-run
+```
 
 ## Sync Modes
 
