@@ -4,29 +4,28 @@
 
 This repository is intentionally **CLI-only**.
 
-## What Changed In v0.2.0
+## What Changed In v0.4.0
 
-- Expanded the built-in agent registry from 8 presets to 42 curated agents.
-- Added registry metadata for future routing logic:
-  - `referenceId`
-  - `installFamily`
-  - `canonicalDir`
-  - `detectInstalled`
-- Updated `doctor --agents` to show install family, canonical dir, and install detection status.
-- Kept default config generation registry-driven, so new presets automatically flow through `init` and `doctor`.
-- Added canonical-first `.agents/skills` support for `skill-md` universal agents:
-  - default scan now includes `~/.agents/skills` and `${projectRoot}/.agents/skills`
-  - `list` / `all-local-skills` collapse same-realpath canonical copies
-  - universal `skill-md` sync writes canonical output without redundant native symlinks
-- Added plugin ownership metadata for `.claude-plugin` discovered skills:
-  - `scan` persists `pluginName` on registry items when ownership is declared by plugin manifests
-  - text `list` / `all-local-skills` render stable grouped sections for ungrouped and plugin-owned skills
-  - `--json` output keeps the existing `count` + `items` envelope and only adds fields
-- Added read-only interop with `vercel-labs/skills` global lock metadata:
-  - `scan` reads `$XDG_STATE_HOME/skills/.skill-lock.json` or `~/.agents/.skill-lock.json`
-  - canonical `~/.agents/skills/*` files remain the source of truth for visibility and governance
-  - registry items may now retain additive external metadata such as `externalSourceUrl`, `externalHash`, and `externalPluginName`
-  - `doctor` reports lockfile presence, version, and unmatched entries without writing back to the external lockfile
+**v0.4.0 — Discovery & Updates:**
+
+- New commands: `find` (search skills.sh ecosystem), `check` (detect available updates via GitHub Trees API), `update` (auto-reinstall outdated skills)
+- `sync --from node_modules` — discover and sync skills from npm package dependencies
+- `resolveGitHubToken()` — automatic token resolution (`GITHUB_TOKEN` > `GH_TOKEN` > `gh auth token`)
+- Agent registry CI automation: `scripts/sync-agent-docs.mjs` and `scripts/validate-agent-registry.mjs`
+
+**v0.3.0 — Remote Install:**
+
+- New commands: `add` (install from GitHub/GitLab/local), `remove` (clean up skills and symlinks)
+- Project-level `skills-lock.json` — deterministic, hash-based, no-timestamp lockfile
+- `parseSource()` — unified source parser (GitHub/GitLab/SSH/shorthand/local)
+- `sanitizeSubpath()` — path-traversal guard
+
+**Still relevant from v0.2.0:**
+
+- 42 curated built-in agents covering 40+ tools and IDEs
+- Canonical `.agents/skills/` as the universal skill storage directory
+- Read-only interop with `vercel-labs/skills` lockfile metadata
+- Plugin ownership grouping for `.claude-plugin` discovered skills
 
 ## Project Lockfile (`skills-lock.json`)
 

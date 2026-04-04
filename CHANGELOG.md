@@ -1,88 +1,63 @@
 # Changelog
 
-## Unreleased
+## [0.4.0] - 2026-04-04
 
-### Added
+### Added — Discovery & Updates
 
-- `skillsdock check [--json]` — detect available updates for installed skills via the GitHub Trees API:
-  - Reads both `skills-lock.json` and the SkillsDock registry for tracked skills
-  - Uses GitHub Trees API (`GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1`) with one API call per repository (batches skills from the same repo)
-  - Computes a SHA-256 fingerprint from remote tree blob SHAs and compares against a locally stored `treeSha` field (same hash domain as GitHub API, avoiding false positives from content-vs-git-object hash mismatches)
-  - Text output shows up-to-date count, skills with updates, and skipped skills
-  - `--json` outputs machine-readable JSON (no ANSI escape codes)
+- `skillsdock check [--json]` — detect available updates for installed skills via GitHub Trees API:
+  - Batches skills from the same repo (one API call per repository)
+  - Computes SHA-256 fingerprint from remote tree blob SHAs (`treeSha` field in lockfile)
+  - Text output shows up-to-date count, skills with updates, and skipped skills; `--json` outputs machine-readable JSON
   - Skips non-GitHub sources (local, GitLab) with a reason in the report
   - Graceful degradation on network errors and API rate limits
-- `skillsdock update [--scope user|project] [--dry-run]` — automatically re-install skills that have available updates:
-  - Runs the same freshness detection as `check`
-  - Re-clones and re-installs outdated skills using `installSkillToTarget()`
-  - Updates `skills-lock.json` with new content hashes and `treeSha` after installation
+- `skillsdock update [--scope user|project] [--dry-run]` — re-install outdated skills automatically:
+  - Runs same freshness detection as `check`, then re-clones and re-installs via `installSkillToTarget()`
+  - Updates `skills-lock.json` with new content hashes and `treeSha`
   - `--dry-run` previews which skills would be updated without writing files
-  - `--scope user|project` controls the installation target (default: `project`)
-  - Prints an update summary: updated count, already up to date, skipped
-- `resolveGitHubToken()` — resolves a GitHub token with priority: `GITHUB_TOKEN` env var > `GH_TOKEN` env var > `gh auth token` CLI fallback; unauthenticated requests still work (60 req/hr)
-- Exported `installSkillToTarget()` for reuse in `cmdUpdate`
-- `computeLocalTreeFingerprint(repoDir, subpath)` — computes a tree fingerprint from a local git clone using `git ls-tree -r HEAD`, producing hashes in the same domain as the GitHub Trees API (git blob SHA-1s)
-- `treeSha` field added to `skills-lock.json` entries for GitHub-sourced skills — stores the tree fingerprint at install time for reliable freshness detection
-- Pre-existing lockfile entries without `treeSha` are treated as needing update (one-time migration)
-- Test suite `test/check-update.test.mjs` covering token resolution, update detection, treeSha-based comparison, legacy entries without treeSha, batching, network errors, rate limits, JSON output, dry-run, CLI integration, and mixed scenarios (27 tests)
 - `skillsdock find [query] [--json]` — search for skills in the skills.sh ecosystem:
-  - Non-interactive mode: `skillsdock find <query>` searches and prints a formatted results table
-  - Interactive mode: `skillsdock find` in a TTY launches a readline-based live search with debounce
+  - Non-interactive mode with formatted table; interactive readline-based live search in TTY
   - `--json` flag outputs machine-readable JSON array
   - Defensive API response parsing (supports array, `{ results }`, and `{ skills }` formats)
-  - Graceful degradation for network errors, timeouts, and non-200 HTTP status codes
-  - Non-TTY without query shows usage hint
-- `skillsdock remove <selector>` — new command to clean up installed skill files, symlinks, and registry/lockfile entries:
-  - Resolves skills by id, key, or path via `resolveSelectorMatches()`
-  - Deletes canonical skill directories under `.agents/skills/`
-  - Scans and removes symlinks from non-universal agent directories that point to the canonical skill
-  - Sets registry tag to `deleted` and removes lockfile entries
-  - `--scope user|project` — restrict removal to a specific scope
-  - `--all --scope <scope>` — remove all skills in the given scope
-  - `--dry-run` — preview actions without modifying files
-  - `--force` — override `frozen` tag protection
-- Test suite `test/remove-command.test.mjs` covering normal removal, frozen protection, `--force`, `--dry-run`, `--all`, lockfile updates, registry tag updates, project scope, and error handling.
-- `skillsdock add <source>` — lightweight remote/local skill installation:
-  - Supports GitHub `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
-  - `--scope user|project` to control installation target (default: `user`)
-  - `--dry-run` to preview installation without writing files
-  - `--copy` to force copy mode instead of agent symlinks
-  - Clones GitHub repos with `git clone --depth 1 --single-branch` for minimal bandwidth
-  - Scans cloned/local directories for `SKILL.md` files (root, `skills/`, `.agents/skills/`)
-  - Installs skills to canonical `.agents/skills/<skill-name>/` directory
-  - Creates symlinks to non-universal agent directories by default
-  - Updates SkillsDock registry with installed skill metadata
-  - Updates lockfiles for both user and project scopes
-  - Validates `SKILL.md` frontmatter before installation; skips invalid files with warnings
-  - Cleans up temporary clone directories in a `finally` block
-- Added `writeExternalSkillLock()` for writing user-scope `.skill-lock.json` lockfiles
-- `sync --from node_modules` — discover and sync skills from `node_modules` packages:
-  - `discoverNodeModuleSkills(projectRoot)` scans `node_modules` (including scoped `@org/pkg` packages) for `SKILL.md` files in package root, `skills/`, and `.agents/skills/` directories
-  - Incremental diff using SHA-256 hash comparison (`computeSkillFolderHash`): unchanged skills are skipped ("up to date"), new/changed skills are installed/updated
-  - Syncs to canonical `.agents/skills/<skill-name>/` directory
+  - Graceful offline degradation for network errors, timeouts, and non-200 responses
+- `sync --from node_modules` — discover and sync skills from npm dependencies:
+  - `discoverNodeModuleSkills(projectRoot)` scans `node_modules` (including scoped `@org/pkg`) for `SKILL.md` files
+  - Incremental diff via SHA-256 hash comparison (`computeSkillFolderHash`); skips unchanged skills
   - Updates `skills-lock.json` with `sourceType: "node_modules"` and package name as `source`
-  - `--dry-run` support: prints planned actions without writing files
-  - `--scope user|project` support (defaults to `project`)
-  - Skips `.bin`, `.cache`, and other non-package directories in `node_modules`
-- Test suite `test/node-modules-sync.test.mjs` covering discovery, scoped packages, incremental skip, hash-change update, dry-run, and lockfile updates
+  - `--dry-run` and `--scope user|project` support
+- `resolveGitHubToken()` — resolves GitHub token (`GITHUB_TOKEN` > `GH_TOKEN` > `gh auth token`); unauthenticated requests still work (60 req/hr)
+- `computeLocalTreeFingerprint(repoDir, subpath)` — tree fingerprint from local git clone using `git ls-tree -r HEAD` (same hash domain as GitHub Trees API)
+- `treeSha` field added to `skills-lock.json` entries for GitHub-sourced skills; pre-existing entries without `treeSha` trigger one-time migration re-check
+- Exported `installSkillToTarget()` for reuse across commands
+- Agent registry CI automation: `scripts/sync-agent-docs.mjs` and `scripts/validate-agent-registry.mjs`
+- `registry:sync` and `registry:validate` npm scripts
+- CI steps to validate agent registry and detect docs drift on every push/PR
+- Test suite `test/check-update.test.mjs` (27 tests) and `test/node-modules-sync.test.mjs` covering all new commands
 
-- `parseSource(raw)` — pure-function parser that classifies skill sources: GitHub URL, GitLab URL (including sub-groups), SSH URL, local path, `owner/repo` shorthand, and prefix shorthand (`github:`, `gitlab:`). Returns a structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
-- `getOwnerRepo(parsed)` — helper that returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking).
-- `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`.
-- Test suite `test/source-parser.test.mjs` covering all source formats, edge cases, and traversal attacks.
-- Added `scripts/sync-agent-docs.mjs` to auto-generate agent tables in `README.md` and `COMPATIBILITY.md` from `bin/agent-registry.json`.
-- Added `scripts/validate-agent-registry.mjs` to validate registry data integrity (required fields, duplicate IDs, path format, scope completeness).
-- Added `registry:sync` and `registry:validate` npm scripts.
-- Added CI steps to validate agent registry and detect docs drift on every push/PR.
-- Wrapped existing agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync.
-- Added project-level `skills-lock.json` for deterministic skill tracking:
+## [0.3.0] - 2026-04-04
+
+### Added — Remote Install
+
+- `skillsdock add <source> [--scope user|project] [--dry-run] [--copy]` — install skills from GitHub repos or local paths:
+  - Supports `owner/repo`, `owner/repo@skill-name` shorthand, full GitHub/GitLab URLs, and local paths
+  - Clones with `git clone --depth 1 --single-branch`; validates `SKILL.md` frontmatter before installation
+  - Installs to canonical `.agents/skills/<skill-name>/`; creates agent symlinks; updates registry and lockfile
+  - Cleans up temporary clone directories in a `finally` block
+- `skillsdock remove <selector> [--scope user|project] [--dry-run] [--force]` — clean up skill files:
+  - Resolves skills by id, key, or path via `resolveSelectorMatches()`
+  - Deletes canonical dirs and agent symlinks; sets registry tag to `deleted`; removes lockfile entries
+  - `--all --scope <scope>` for bulk removal; `--force` overrides `frozen` tag protection
+- `parseSource(raw)` — pure-function source parser (GitHub URL, GitLab URL including sub-groups, SSH URL, local path, `owner/repo` shorthand, `github:`/`gitlab:` prefix). Returns structured descriptor with `type`, `owner`, `repo`, `branch`, `subpath`, `skillFilter`, and `raw`.
+- `getOwnerRepo(parsed)` — returns `"owner/repo"` from a parsed source descriptor (for lockfile tracking)
+- `sanitizeSubpath(subpath)` — path-traversal guard that rejects any segment equal to `..`
+- `writeExternalSkillLock()` for writing user-scope `.skill-lock.json` lockfiles
+- Project-level `skills-lock.json` — deterministic, hash-based, no-timestamp lockfile:
   - `readProjectLockfile(projectRoot)` — reads lockfile; gracefully handles missing files, invalid JSON, and merge-conflict markers
   - `writeProjectLockfile(projectRoot, lockData)` — writes sorted, deterministic JSON with 2-space indent and trailing newline
   - `computeSkillFolderHash(skillDirPath)` — SHA-256 hash of a skill directory (path-aware, skips `.git`/`node_modules`)
-  - `updateLockfileEntry(projectRoot, skillName, entryData)` — upsert a single skill entry
-  - `removeLockfileEntry(projectRoot, skillName)` — remove a single skill entry
-- No timestamp fields in `skills-lock.json` to minimize git merge conflicts
-- Lockfile location: `${projectRoot}/skills-lock.json`
+  - `updateLockfileEntry()` and `removeLockfileEntry()` for upsert/remove of individual skill entries
+  - No timestamp fields; lockfile lives at `${projectRoot}/skills-lock.json`
+- Wrapped agent tables in `README.md` and `COMPATIBILITY.md` with marker comments for automated sync
+- Test suites `test/remove-command.test.mjs` and `test/source-parser.test.mjs`
 
 ## 0.2.0
 
