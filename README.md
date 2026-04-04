@@ -47,11 +47,15 @@ Schema:
       "sourceType": "github",
       "sourceUrl": "https://github.com/owner/repo",
       "computedHash": "sha256-hex-string",
+      "treeSha": "sha256-hex-string",
       "skillPath": "relative/path/to/skill"
     }
   }
 }
 ```
+
+- `computedHash`: SHA-256 of local file contents (for integrity checking)
+- `treeSha`: SHA-256 fingerprint derived from git blob SHAs (for remote freshness detection via `skillsdock check`)
 
 The lockfile lives at `${projectRoot}/skills-lock.json` (auto-detected via `detectProjectRoot()`).
 

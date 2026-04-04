@@ -4251,6 +4251,16 @@ async function cmdAdd(flags, args, context) {
     if (!dryRun && scope === 'project') {
       const resolvedUrl = sourceUrl(source);
 
+      let treeSha = null;
+      if (tmpDir && source.type === 'github') {
+        try {
+          const repoDir = path.join(tmpDir, 'repo');
+          treeSha = computeLocalTreeFingerprint(repoDir, source.subpath || '');
+        } catch {
+          // Non-fatal
+        }
+      }
+
       for (const item of installed) {
         let folderHash = null;
         try {
@@ -4259,13 +4269,15 @@ async function cmdAdd(flags, args, context) {
           // Non-fatal
         }
 
-        await updateLockfileEntry(projectRoot, item.skillName, {
+        const lockEntry = {
           source: sourceArg,
           sourceType: source.type,
           sourceUrl: resolvedUrl,
           computedHash: folderHash,
           skillPath: path.relative(projectRoot, item.destDir)
-        });
+        };
+        if (treeSha) lockEntry.treeSha = treeSha;
+        await updateLockfileEntry(projectRoot, item.skillName, lockEntry);
       }
     }
 
@@ -5100,15 +5112,44 @@ async function fetchGitHubTree(owner, repo, branch, token, fetchFn) {
 
 function buildTreeFingerprint(treeData, subpath) {
   const prefix = subpath ? (subpath.endsWith('/') ? subpath : subpath + '/') : '';
-  const relevant = treeData.tree.filter((entry) => {
-    if (!prefix) return true;
-    return entry.path === subpath || entry.path.startsWith(prefix);
-  });
+  const relevant = treeData.tree
+    .filter((entry) => {
+      if (entry.type !== 'blob') return false;
+      if (!prefix) return true;
+      return entry.path === subpath || entry.path.startsWith(prefix);
+    });
   relevant.sort((a, b) => a.path.localeCompare(b.path));
   const hash = crypto.createHash('sha256');
   for (const entry of relevant) {
     hash.update(entry.path);
     hash.update(entry.sha || '');
+  }
+  return hash.digest('hex');
+}
+
+function computeLocalTreeFingerprint(repoDir, subpath) {
+  const result = spawnSync('git', ['ls-tree', '-r', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+    timeout: 10000
+  });
+  if (result.status !== 0) return null;
+
+  const prefix = subpath ? (subpath.endsWith('/') ? subpath : subpath + '/') : '';
+  const lines = result.stdout.trim().split('\n').filter(Boolean);
+  const entries = [];
+  for (const line of lines) {
+    const match = line.match(/^\d+ blob ([0-9a-f]+)\t(.+)$/);
+    if (!match) continue;
+    const [, sha, filePath] = match;
+    if (prefix && filePath !== subpath && !filePath.startsWith(prefix)) continue;
+    entries.push({ path: filePath, sha });
+  }
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+  const hash = crypto.createHash('sha256');
+  for (const entry of entries) {
+    hash.update(entry.path);
+    hash.update(entry.sha);
   }
   return hash.digest('hex');
 }
@@ -5135,7 +5176,7 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
         const existsInLock = Object.entries(lockSkills).some(
           ([lockName, e]) =>
             e.sourceUrl === item.externalSourceUrl &&
-            e.computedHash &&
+            (e.treeSha || e.computedHash) &&
             (lockName === registrySkillId || e.skillPath === registrySkillPath)
         );
         if (!existsInLock) {
@@ -5160,7 +5201,7 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
 
   for (const item of allEntries) {
     const { name, entry } = item;
-    if (!entry.sourceUrl || !entry.computedHash) {
+    if (!entry.sourceUrl) {
       noSource.push({ name, reason: 'no source URL' });
       continue;
     }
@@ -5219,14 +5260,24 @@ async function checkSkillUpdates(lockSkills, registryItems, options = {}) {
     for (const skill of group.skills) {
       const subpath = skill.parsed.subpath || '';
       const remoteFingerprint = buildTreeFingerprint(treeData, subpath);
+      const localTreeSha = skill.entry.treeSha;
 
-      if (remoteFingerprint === skill.entry.computedHash) {
+      if (!localTreeSha) {
+        updatesAvailable.push({
+          name: skill.name,
+          source: ownerRepo,
+          currentHash: null,
+          remoteHash: remoteFingerprint,
+          entry: skill.entry,
+          scope: skill.scope
+        });
+      } else if (remoteFingerprint === localTreeSha) {
         upToDate.push({ name: skill.name, source: ownerRepo });
       } else {
         updatesAvailable.push({
           name: skill.name,
           source: ownerRepo,
-          currentHash: skill.entry.computedHash,
+          currentHash: localTreeSha,
           remoteHash: remoteFingerprint,
           entry: skill.entry,
           scope: skill.scope
@@ -5398,6 +5449,14 @@ async function cmdUpdate(flags, args, context) {
         // Non-fatal
       }
 
+      let newTreeSha = null;
+      try {
+        const repoDir = path.join(tmpDir, 'repo');
+        newTreeSha = computeLocalTreeFingerprint(repoDir, source.subpath || '');
+      } catch {
+        // Non-fatal
+      }
+
       const destDir = path.join(targetBaseDir, u.name);
       try {
         await fs.rm(destDir, { recursive: true, force: true });
@@ -5412,13 +5471,15 @@ async function cmdUpdate(flags, args, context) {
       }
 
       if (scope === 'project') {
-        await updateLockfileEntry(projectRoot, u.name, {
+        const lockEntry = {
           source: entry.source,
           sourceType: entry.sourceType,
           sourceUrl: entry.sourceUrl,
           computedHash: folderHash,
           skillPath: path.relative(projectRoot, destDir)
-        });
+        };
+        if (newTreeSha) lockEntry.treeSha = newTreeSha;
+        await updateLockfileEntry(projectRoot, u.name, lockEntry);
       } else {
         const lockPath = getExternalSkillLockPath(homeDir);
         const existingLock = await readExternalSkillLock(homeDir);
@@ -5559,6 +5620,7 @@ export {
   cmdCheck,
   cmdRemove,
   cmdUpdate,
+  computeLocalTreeFingerprint,
   computeSkillFolderHash,
   convertContentToFormat,
   detectProjectRoot,

@@ -89,6 +89,7 @@ import crypto from 'node:crypto';
 function computeTreeFingerprint(treeData, subpath) {
   const prefix = subpath ? (subpath.endsWith('/') ? subpath : subpath + '/') : '';
   const relevant = treeData.tree.filter((entry) => {
+    if (entry.type !== 'blob') return false;
     if (!prefix) return true;
     return entry.path === subpath || entry.path.startsWith(prefix);
   });
@@ -154,13 +155,14 @@ test('resolveGitHubToken returns null when no token available', () => {
 // --- checkSkillUpdates tests ---
 
 test('checkSkillUpdates detects updates available', async () => {
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+  const oldTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   const lockSkills = {
     'my-skill': {
       source: 'test-owner/test-repo',
       sourceType: 'github',
       sourceUrl: 'https://github.com/test-owner/test-repo',
-      computedHash: currentFingerprint,
+      computedHash: 'local-content-hash',
+      treeSha: oldTreeSha,
       skillPath: '.agents/skills/my-skill'
     }
   };
@@ -175,14 +177,15 @@ test('checkSkillUpdates detects updates available', async () => {
   assert.equal(result.upToDate.length, 0);
 });
 
-test('checkSkillUpdates reports up-to-date when hashes match', async () => {
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+test('checkSkillUpdates reports up-to-date when treeSha matches', async () => {
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   const lockSkills = {
     'my-skill': {
       source: 'test-owner/test-repo',
       sourceType: 'github',
       sourceUrl: 'https://github.com/test-owner/test-repo',
-      computedHash: currentFingerprint,
+      computedHash: 'local-content-hash',
+      treeSha: currentTreeSha,
       skillPath: '.agents/skills/my-skill'
     }
   };
@@ -352,7 +355,7 @@ test('cmdCheck outputs text report with updates available', async () => {
   const tmpDir = await makeTmpDir();
   await initGitRepo(tmpDir);
 
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   await writeProjectLockfile(tmpDir, {
     version: 1,
     skills: {
@@ -360,14 +363,16 @@ test('cmdCheck outputs text report with updates available', async () => {
         source: 'owner/repo-a',
         sourceType: 'github',
         sourceUrl: 'https://github.com/owner/repo-a',
-        computedHash: currentFingerprint,
+        computedHash: 'local-hash',
+        treeSha: currentTreeSha,
         skillPath: '.agents/skills/up-to-date-skill'
       },
       'outdated-skill': {
         source: 'owner/repo-b',
         sourceType: 'github',
         sourceUrl: 'https://github.com/owner/repo-b',
-        computedHash: 'stale-hash',
+        computedHash: 'local-hash',
+        treeSha: 'stale-tree-sha',
         skillPath: '.agents/skills/outdated-skill'
       },
       'local-skill': {
@@ -405,7 +410,7 @@ test('cmdCheck outputs JSON when --json flag is set', async () => {
   const tmpDir = await makeTmpDir();
   await initGitRepo(tmpDir);
 
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   await writeProjectLockfile(tmpDir, {
     version: 1,
     skills: {
@@ -413,7 +418,8 @@ test('cmdCheck outputs JSON when --json flag is set', async () => {
         source: 'owner/repo',
         sourceType: 'github',
         sourceUrl: 'https://github.com/owner/repo',
-        computedHash: currentFingerprint,
+        computedHash: 'local-hash',
+        treeSha: currentTreeSha,
         skillPath: '.agents/skills/my-skill'
       }
     }
@@ -453,7 +459,8 @@ test('cmdCheck JSON output has no ANSI escape codes', async () => {
         source: 'owner/repo',
         sourceType: 'github',
         sourceUrl: 'https://github.com/owner/repo',
-        computedHash: 'old-hash',
+        computedHash: 'local-hash',
+        treeSha: 'old-tree-sha',
         skillPath: '.agents/skills/my-skill'
       }
     }
@@ -600,7 +607,7 @@ test('cmdUpdate shows already-up-to-date message', async () => {
   const tmpDir = await makeTmpDir();
   await initGitRepo(tmpDir);
 
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   await writeProjectLockfile(tmpDir, {
     version: 1,
     skills: {
@@ -608,7 +615,8 @@ test('cmdUpdate shows already-up-to-date message', async () => {
         source: 'owner/repo',
         sourceType: 'github',
         sourceUrl: 'https://github.com/owner/repo',
-        computedHash: currentFingerprint,
+        computedHash: 'local-hash',
+        treeSha: currentTreeSha,
         skillPath: '.agents/skills/my-skill'
       }
     }
@@ -692,20 +700,22 @@ test('skillsdock update works via CLI process', async () => {
 // --- Mixed scenario tests ---
 
 test('checkSkillUpdates handles mix of up-to-date, outdated, and skipped skills', async () => {
-  const currentFingerprint = computeTreeFingerprint(MOCK_TREE, '');
+  const currentTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   const lockSkills = {
     'fresh-skill': {
       source: 'owner/repo',
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
-      computedHash: currentFingerprint,
+      computedHash: 'local-hash',
+      treeSha: currentTreeSha,
       skillPath: '.agents/skills/fresh-skill'
     },
     'stale-skill': {
       source: 'owner/repo',
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
-      computedHash: 'stale-hash-value',
+      computedHash: 'local-hash',
+      treeSha: 'stale-tree-sha',
       skillPath: '.agents/skills/stale-skill'
     },
     'local-only': {
@@ -731,18 +741,20 @@ test('checkSkillUpdates handles mix of up-to-date, outdated, and skipped skills'
 });
 
 test('checkSkillUpdates updatesAvailable contains correct fields', async () => {
+  const oldTreeSha = computeTreeFingerprint(MOCK_TREE, '');
   const lockSkills = {
     'my-skill': {
       source: 'owner/repo',
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
-      computedHash: 'old-hash',
+      computedHash: 'local-hash',
+      treeSha: oldTreeSha,
       skillPath: '.agents/skills/my-skill'
     }
   };
 
   const result = await checkSkillUpdates(lockSkills, {}, {
-    fetchFn: makeFetchFn(MOCK_TREE),
+    fetchFn: makeFetchFn(UPDATED_TREE),
     token: null
   });
 
@@ -752,4 +764,26 @@ test('checkSkillUpdates updatesAvailable contains correct fields', async () => {
   assert.ok(update.source);
   assert.ok(update.currentHash);
   assert.ok(update.remoteHash);
+  assert.notEqual(update.currentHash, update.remoteHash);
+});
+
+test('checkSkillUpdates flags entries without treeSha as needing update', async () => {
+  const lockSkills = {
+    'legacy-skill': {
+      source: 'owner/repo',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      computedHash: 'local-content-hash-only',
+      skillPath: '.agents/skills/legacy-skill'
+    }
+  };
+
+  const result = await checkSkillUpdates(lockSkills, {}, {
+    fetchFn: makeFetchFn(MOCK_TREE),
+    token: null
+  });
+
+  assert.equal(result.updatesAvailable.length, 1);
+  assert.equal(result.updatesAvailable[0].name, 'legacy-skill');
+  assert.equal(result.updatesAvailable[0].currentHash, null);
 });
