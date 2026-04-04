@@ -14,11 +14,12 @@ const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'bin', 'skillsdock.mjs');
 
 function runCliProcess(args, cwd, envOverrides = {}) {
+  const { XDG_STATE_HOME, ...cleanEnv } = process.env;
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...cleanEnv,
       ...envOverrides
     }
   });
@@ -414,7 +415,7 @@ test('add: fails without source argument', async () => {
   );
 });
 
-test('add: --copy flag forces copy mode', async () => {
+test('add: --copy flag suppresses agent symlinks', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-add-copy-'));
   const homeDir = path.join(base, 'home');
   const sourceDir = path.join(base, 'source');
@@ -432,12 +433,47 @@ test('add: --copy flag forces copy mode', async () => {
 
   assert.equal(result.status, 0, `Expected exit 0: ${result.stderr}\n${result.stdout}`);
 
-  const installedSkillMd = path.join(homeDir, '.agents', 'skills', 'demo-skill', 'SKILL.md');
-  const content = await readFile(installedSkillMd, 'utf8');
-  assert.ok(content.includes('demo-skill'), 'File should be copied');
+  const canonicalSkillMd = path.join(homeDir, '.agents', 'skills', 'demo-skill', 'SKILL.md');
+  const content = await readFile(canonicalSkillMd, 'utf8');
+  assert.ok(content.includes('demo-skill'), 'File should be copied to canonical dir');
 
-  const stats = await lstat(installedSkillMd);
-  assert.ok(!stats.isSymbolicLink(), 'Installed file should not be a symlink in copy mode');
+  const canonicalStats = await lstat(canonicalSkillMd);
+  assert.ok(!canonicalStats.isSymbolicLink(), 'Canonical install should be a regular file');
+
+  const agentSkillDir = path.join(homeDir, '.claude', 'skills', 'demo-skill');
+  let agentExists = false;
+  try {
+    await lstat(agentSkillDir);
+    agentExists = true;
+  } catch {}
+  assert.equal(agentExists, false, 'Agent symlink should NOT be created in --copy mode');
+});
+
+test('add: without --copy creates agent symlinks', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'skillsdock-add-symlink-'));
+  const homeDir = path.join(base, 'home');
+  const sourceDir = path.join(base, 'source');
+  const registryPath = path.join(base, 'registry.json');
+
+  await mkdir(path.join(sourceDir, 'demo-skill'), { recursive: true });
+  await writeFile(path.join(sourceDir, 'demo-skill', 'SKILL.md'), DEMO_SKILL_MD, 'utf8');
+  await mkdir(homeDir, { recursive: true });
+
+  const result = runCliProcess(
+    ['add', sourceDir, '--scope', 'user', '--registry', registryPath],
+    base,
+    { HOME: homeDir }
+  );
+
+  assert.equal(result.status, 0, `Expected exit 0: ${result.stderr}\n${result.stdout}`);
+
+  const canonicalSkillMd = path.join(homeDir, '.agents', 'skills', 'demo-skill', 'SKILL.md');
+  const content = await readFile(canonicalSkillMd, 'utf8');
+  assert.ok(content.includes('demo-skill'), 'File should be copied to canonical dir');
+
+  const agentSkillDir = path.join(homeDir, '.claude', 'skills', 'demo-skill');
+  const agentStats = await lstat(agentSkillDir);
+  assert.ok(agentStats.isSymbolicLink(), 'Agent path should be a symlink without --copy');
 });
 
 test('add: skips SKILL.md files with invalid frontmatter', async () => {

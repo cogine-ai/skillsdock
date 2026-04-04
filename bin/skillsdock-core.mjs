@@ -3926,8 +3926,18 @@ async function walkForSkillMd(dir, results, rootDir, depth = 0) {
   }
 }
 
+function buildCloneUrl(source) {
+  if (source.owner && source.repo) {
+    const host = source.type === 'gitlab' ? 'gitlab.com' : 'github.com';
+    return `https://${host}/${source.owner}/${source.repo}.git`;
+  }
+  const raw = source.url || source.raw || '';
+  const cleaned = raw.replace(/\/tree\/.*$/, '').replace(/\/$/, '');
+  return cleaned.endsWith('.git') ? cleaned : `${cleaned}.git`;
+}
+
 async function cloneGitRepo(source, tmpDir) {
-  const repoUrl = source.url.endsWith('.git') ? source.url : `${source.url}.git`;
+  const repoUrl = buildCloneUrl(source);
   const cloneDir = path.join(tmpDir, 'repo');
 
   const cloneArgs = ['clone', '--depth', '1', '--single-branch'];
@@ -4098,18 +4108,14 @@ async function cmdAdd(flags, args, context) {
     let searchRoot;
 
     if (source.type === 'local') {
-      const localPath = path.resolve(source.raw);
+      const localPath = path.resolve(expandHomePath(source.raw, homeDir));
       if (!(await pathExists(localPath))) {
         throw makeCliError(`Local path does not exist: ${localPath}`);
       }
       searchRoot = localPath;
     } else {
       tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'skillsdock-add-'));
-      const cloneSource = {
-        ...source,
-        url: sourceUrl(source) || source.raw
-      };
-      searchRoot = await cloneGitRepo(cloneSource, tmpDir);
+      searchRoot = await cloneGitRepo(source, tmpDir);
     }
 
     const skills = await discoverSkillMdFiles(searchRoot);
@@ -4179,6 +4185,19 @@ async function cmdAdd(flags, args, context) {
       const lockPath = getExternalSkillLockPath(homeDir);
       const existingLock = await readExternalSkillLock(homeDir);
       const lockEntries = [];
+
+      if (existingLock.exists && !existingLock.healthy) {
+        const backupPath = `${lockPath}.backup-${Date.now()}`;
+        try {
+          await fs.copyFile(lockPath, backupPath);
+          console.log(`WARN: Existing lockfile is corrupted. Backed up to ${backupPath}`);
+          for (const issue of existingLock.issues) {
+            console.log(`  ${issue}`);
+          }
+        } catch {
+          console.log('WARN: Existing lockfile is corrupted and could not be backed up.');
+        }
+      }
 
       if (existingLock.healthy) {
         for (const [, entry] of existingLock.entriesByName) {
@@ -4255,7 +4274,8 @@ async function cmdAdd(flags, args, context) {
         const canonicalPath = normalizePath(skillMdPath);
         const key = makeCanonicalKey(canonicalPath);
 
-        const registryItem = makeRegistryItemFromUnknown(
+        const existing = registry.items[key];
+        const incoming = makeRegistryItemFromUnknown(
           {
             key,
             canonicalPath,
@@ -4270,9 +4290,9 @@ async function cmdAdd(flags, args, context) {
             manifestHash: manifest.manifestHash,
             structureManifest: manifest,
             state: 'active',
-            createdAt: now,
+            createdAt: existing?.createdAt || now,
             updatedAt: now,
-            firstSeenAt: now,
+            firstSeenAt: existing?.firstSeenAt || now,
             lastSeenAt: now,
             externalSource: sourceArg,
             externalSourceType: source.type,
@@ -4280,7 +4300,7 @@ async function cmdAdd(flags, args, context) {
           },
           ''
         );
-        registry.items[key] = registryItem;
+        registry.items[key] = mergeRegistryItems(existing, incoming);
       }
 
       registry.updatedAt = now;
